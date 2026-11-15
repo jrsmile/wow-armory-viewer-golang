@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"math"
 	"os"
@@ -31,6 +32,9 @@ type Config struct {
 	Fullscreen bool
 	SelfTest   bool
 	Screenshot string
+	// Progress, when set, is shown as a URL log and progress bar at the
+	// bottom of the window while a lookup is running.
+	Progress *Progress
 }
 
 type sdl struct {
@@ -52,6 +56,7 @@ type sdl struct {
 	getClipboardText    func() unsafe.Pointer
 	free                func(unsafe.Pointer)
 	setWindowFullscreen func(uintptr, uint32) int32
+	showCursor          func(int32) int32
 }
 
 type gl struct {
@@ -133,6 +138,7 @@ func loadSDL() (sdl, uintptr, error) {
 		{&s.glGetDrawableSize, "SDL_GL_GetDrawableSize"}, {&s.pollEvent, "SDL_PollEvent"},
 		{&s.startTextInput, "SDL_StartTextInput"}, {&s.stopTextInput, "SDL_StopTextInput"}, {&s.getError, "SDL_GetError"},
 		{&s.getClipboardText, "SDL_GetClipboardText"}, {&s.free, "SDL_free"}, {&s.setWindowFullscreen, "SDL_SetWindowFullscreen"},
+		{&s.showCursor, "SDL_ShowCursor"},
 	} {
 		purego.RegisterLibFunc(binding.target, lib, binding.name)
 	}
@@ -485,6 +491,7 @@ func Run(config Config) error {
 		status = "Paste a retail Blizzard Armory URL. Enter: look up | F11: fullscreen | Esc: quit"
 	}
 	help, showUI, paused, busy := false, config.Scene == nil, false, false
+	cursorShown, lookupStart := true, time.Now()
 	angle, zoom := float32(-math.Pi/2), float32(1)
 	type lookupResult struct {
 		scene *model.Scene
@@ -492,7 +499,10 @@ func Run(config Config) error {
 	}
 	results := make(chan lookupResult, 1)
 	lookup := func(raw string) {
-		busy, showUI = true, true
+		busy, showUI, lookupStart = true, true, time.Now()
+		if config.Progress != nil {
+			config.Progress.Reset()
+		}
 		status = "Fetching Armory appearance and assembling character from the Blizzard CDN..."
 		go func() {
 			sc, err := config.Lookup(raw)
@@ -624,7 +634,21 @@ func Run(config Config) error {
 				return err
 			}
 		}
+		// Everything (overlay and mouse cursor) disappears once a character is shown.
+		if visible := int32(0); (showUI || help) != cursorShown {
+			cursorShown = showUI || help
+			if cursorShown {
+				visible = 1
+			}
+			s.showCursor(visible)
+		}
 		if showUI || help {
+			var foot *footer
+			if busy && config.Progress != nil {
+				foot = &footer{}
+				foot.lines, foot.summary, foot.fraction = config.Progress.snapshot(int(height) / 32)
+				foot.phase = time.Since(lookupStart).Seconds()
+			}
 			lines := []string{"ARMORY / native Go + OpenGL", "", "URL: " + input, "", status}
 			if config.Scene != nil {
 				lines = append(lines, config.Scene.Warnings...)
@@ -632,7 +656,7 @@ func Run(config Config) error {
 			if help {
 				lines = append(lines, "", "Tab: hide/show input | Ctrl+V: paste | Ctrl+A: clear input", "Enter: profile lookup | F11: fullscreen | Esc: quit", "With input hidden: arrows orbit/zoom | Space: pause | Q: quit", "?: shortcuts | Stand is WoW animation 0 played from the model's own keyframes.")
 			}
-			g.drawOverlay(overlay, overlayVAO, overlayTexture, int(width), int(height), lines)
+			g.drawOverlay(overlay, overlayVAO, overlayTexture, int(width), int(height), lines, foot)
 		}
 		if code := g.getError(); code != 0 {
 			return fmt.Errorf("OpenGL error 0x%x", code)
@@ -753,23 +777,47 @@ func (g gl) drawScene(program uint32, sg *sceneGPU, ms uint32, aspect, angle, zo
 	return nil
 }
 
-func (g gl) drawOverlay(program, vao, texture uint32, width, height int, lines []string) {
+// footer is the download log and progress bar drawn at the window bottom.
+type footer struct {
+	lines    []string
+	summary  string
+	fraction float64 // < 0: indeterminate
+	phase    float64 // seconds, animates the indeterminate bar
+}
+
+func printable(line string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 {
+			return ' '
+		}
+		if r > 126 {
+			return '?'
+		}
+		return r
+	}, line)
+}
+
+func reversed(in []string) []string {
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[len(in)-1-i] = v
+	}
+	return out
+}
+
+func (g gl) drawOverlay(program, vao, texture uint32, width, height int, lines []string, foot *footer) {
 	// Rasterize text in a small logical surface; OpenGL composites it at display size.
 	w, h := max(1, width/2), max(1, height/2)
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	drawer := font.Drawer{Dst: img, Src: image.NewUniform(color.NRGBA{225, 229, 235, 255}), Face: basicfont.Face7x13}
+	limit := max(4, (w-24)/7)
+	bottom := h - 10 // text area of the top block ends here
+	if foot != nil {
+		bottom = h - 16 - 6 - 2*15 // keep room for the summary and one URL
+	}
 	y := 20
 	for _, line := range lines {
-		line = strings.Map(func(r rune) rune {
-			if r < 32 {
-				return ' '
-			}
-			if r > 126 {
-				return '?'
-			}
-			return r
-		}, line)
-		limit := max(1, (w-24)/7)
+		line = printable(line)
 		for {
 			n := min(len(line), limit)
 			text := line[:n]
@@ -777,13 +825,50 @@ func (g gl) drawOverlay(program, vao, texture uint32, width, height int, lines [
 			drawer.DrawString(text)
 			y += 16
 			line = line[n:]
-			if line == "" || y >= h-10 {
+			if line == "" || y >= bottom {
 				break
 			}
 		}
-		if y >= h-10 {
+		if y >= bottom {
 			break
 		}
+	}
+	topEnd := y - 6
+	if foot != nil {
+		barTop := h - 16
+		fill := func(x0, x1 int, c color.NRGBA) {
+			draw.Draw(img, image.Rect(x0, barTop, x1, h-8), image.NewUniform(c), image.Point{}, draw.Src)
+		}
+		x0, x1 := 12, w-12
+		fill(x0, x1, color.NRGBA{40, 48, 60, 220})
+		if foot.fraction >= 0 {
+			fill(x0, x0+int(float64(x1-x0)*min(1, foot.fraction)), color.NRGBA{64, 156, 255, 255})
+		} else if x1-x0 > 4 {
+			seg := (x1 - x0) / 5
+			off := int(foot.phase*float64(x1-x0)/1.5) % (x1 - x0 + seg)
+			fill(max(x0, x0+off-seg), min(x1, x0+off), color.NRGBA{64, 156, 255, 255})
+		}
+		y := barTop - 6
+		rows := append([]string{foot.summary}, reversed(foot.lines)...)
+		dim := image.NewUniform(color.NRGBA{150, 160, 175, 255})
+		for k, line := range rows {
+			if y-13 < topEnd {
+				break
+			}
+			line = printable(line)
+			if len(line) > limit {
+				// Keep host and the hash/size tail of long CDN URLs.
+				head := min(28, limit/3)
+				line = line[:head] + "..." + line[len(line)-(limit-head-3):]
+			}
+			if k > 0 {
+				drawer.Src = dim
+			}
+			drawer.Dot = fixed.P(12, y)
+			drawer.DrawString(line)
+			y -= 15
+		}
+		drawer.Src = image.NewUniform(color.NRGBA{225, 229, 235, 255})
 	}
 	g.disable(0x0B71)
 	g.enable(0x0BE2)

@@ -172,7 +172,8 @@ All models, textures and DB2 tables come straight from the Blizzard CDN.`)
 		printWarnings(scene)
 		return viewer.Run(viewer.Config{Scene: scene, Fullscreen: !*windowed, SelfTest: true, Screenshot: *screenshot, Status: status})
 	case "open":
-		config := viewer.Config{Fullscreen: !*windowed, URL: *url}
+		config := viewer.Config{Fullscreen: !*windowed, URL: *url, Progress: &viewer.Progress{}}
+		sess.progress = config.Progress.Report
 		config.Lookup = func(raw string) (*model.Scene, error) {
 			data, err := fetchAppearance(ctx, raw, api)
 			if err != nil {
@@ -212,6 +213,7 @@ All models, textures and DB2 tables come straight from the Blizzard CDN.`)
 type session struct {
 	cache, region string
 	log           func(string)
+	progress      func(url string, done, total int64, err error)
 	once          sync.Once
 	err           error
 	client        *tact.Client
@@ -224,6 +226,7 @@ func (s *session) open(ctx context.Context) error {
 	s.once.Do(func() {
 		s.client = tact.New(s.cache)
 		s.client.Log = s.log
+		s.client.Progress = s.progress
 		if s.err = s.client.Discover(ctx, s.region); s.err != nil {
 			return
 		}

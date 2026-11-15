@@ -19,8 +19,10 @@ make build
 ./build/armory open            # paste a URL (Ctrl+V) and press Enter
 ```
 
-The window opens fullscreen and hides the input overlay once the character
-is loaded (Tab brings it back to enter another URL). The first lookup
+While a character loads, the bottom of the window lists every CDN URL being
+downloaded (with size or HTTP status) above a progress bar for the transfer
+in flight. Once the character is loaded all UI, including the mouse cursor,
+is hidden (Tab brings the overlay back to enter another URL). The first lookup
 downloads the CDN manifests (hundreds of MB) and DB2 tables; everything is
 cached under `~/.cache/armory/cdn` (`--cache` overrides), so later lookups
 take seconds. `-v` logs downloads and assembly warnings.

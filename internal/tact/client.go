@@ -35,7 +35,11 @@ type Client struct {
 	scanned   int
 	origins   []string
 	Log       func(string)
-	mu        sync.Mutex
+	// Progress, when set, is called as each CDN download proceeds. total is
+	// -1 when the server sends no length; done == total (or err != nil)
+	// marks the end of the download.
+	Progress func(url string, done, total int64, err error)
+	mu       sync.Mutex
 }
 
 type Location struct {
@@ -396,8 +400,15 @@ func (c *Client) fetchOnce(ctx context.Context, target, rng string, limit int64)
 	if rng != "" {
 		req.Header.Set("Range", rng)
 	}
+	report := func(done, total int64, err error) {
+		if c.Progress != nil {
+			c.Progress(target, done, total, err)
+		}
+	}
+	report(0, -1, nil)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		report(0, -1, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -406,16 +417,47 @@ func (c *Client) fetchOnce(ctx context.Context, target, rng string, limit int64)
 		expected = http.StatusPartialContent
 	}
 	if resp.StatusCode != expected {
-		return nil, &StatusError{resp.StatusCode}
+		err := &StatusError{resp.StatusCode}
+		report(0, -1, err)
+		return nil, err
 	}
 	if rng != "" {
 		var first, last, total uint64
 		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &first, &last, &total); err != nil ||
 			fmt.Sprintf("bytes=%d-%d", first, last) != rng || total <= last {
-			return nil, fmt.Errorf("CDN returned a mismatched Content-Range")
+			err := fmt.Errorf("CDN returned a mismatched Content-Range")
+			report(0, -1, err)
+			return nil, err
 		}
 	}
-	return readLimited(resp.Body, limit)
+	total := resp.ContentLength
+	body := io.Reader(resp.Body)
+	if c.Progress != nil {
+		body = &progressReader{r: resp.Body, total: total, report: report}
+	}
+	data, err := readLimited(body, limit)
+	if err == nil {
+		report(int64(len(data)), int64(len(data)), nil)
+	} else {
+		report(int64(len(data)), total, err)
+	}
+	return data, err
+}
+
+type progressReader struct {
+	r      io.Reader
+	done   int64
+	total  int64
+	report func(done, total int64, err error)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	if n > 0 && p.done != p.total {
+		p.report(p.done, p.total, nil)
+	}
+	return n, err
 }
 
 func readLimited(r io.Reader, limit int64) ([]byte, error) {
