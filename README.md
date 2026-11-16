@@ -2,8 +2,8 @@
 
 A GPU-accelerated World of Warcraft character viewer written in Go. Enter a
 Blizzard Armory character URL and the character is assembled from the live
-retail game data on Blizzard's CDN and displayed fullscreen, looping its
-native **Stand** (idle) animation.
+retail game data on Blizzard's CDN and displayed fullscreen in its native idle: the **Stand** loop, rotating
+through the race's idle fidgets (yawning, stretching, looking around, ...).
 
 Linux, Go 1.25+, the SDL2 runtime and an OpenGL 3.3 driver are required. The
 binary builds with `CGO_ENABLED=0`: Go calls SDL2/OpenGL through purego.
@@ -83,12 +83,20 @@ against DB2 tables read by `internal/db2`:
    to the body skeleton by bone-name CRC.
 
 The result is a scene of instances. Every frame Go evaluates the body's
-Stand pose, shares it with collection models, positions attachments, and the
+idle pose, shares it with collection models, positions attachments, and the
 GPU does vertex skinning, texturing, lighting and M2 blending (opaque,
 alpha-key, alpha, additive, modulate).
 
+Idle animation: the idle fidgets are the other variations of WoW animation 0
+(Stand), each with its own `.anim` file. Stand loops for 6–12 s, then one
+fidget plays and the body returns to Stand. Fidgets come in shuffled order,
+so each one plays before any repeats. Every clip change cross-fades using the
+sequence's blend time (150–500 ms). If a fidget has no keyframes for a bone,
+that bone keeps its Stand track instead of snapping to the bind pose, so the
+start and end of every clip line up with Stand.
+
 The format layer supports MD21/MD20 (v264–274), SFID skins, TXID textures,
-SKID skeletons, external `.anim` Stand tracks, BLP2 (palette/DXT1/3/5/BGRA),
+SKID skeletons, external `.anim` Stand and idle-variation tracks, BLP2 (palette/DXT1/3/5/BGRA),
 WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 
 ## Known limitations
@@ -111,7 +119,7 @@ WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 | Tab | Hide/show the input overlay |
 | F11 | Toggle fullscreen |
 | Left/Right, Up/Down | Orbit, zoom (overlay hidden) |
-| Space | Pause/resume Stand (overlay hidden) |
+| Space | Pause/resume the idle animation (overlay hidden) |
 | ? | Shortcut overlay |
 | Esc / Q (overlay hidden) | Quit |
 
@@ -187,7 +195,7 @@ Armory URL -> /appearance JSON (race, sex, customization choices, transmogs)
   -> DB2 tables (WDC5 + WoWDBDefs) -> body M2, customization models,
      geosets, composited skin/armor textures, item models + attachments
   -> scene of skinned instances sharing the body skeleton
-  -> native renderer, looping the body's Stand animation
+  -> native renderer, cycling the body's Stand loop and idle fidgets
 ```
 
 World of Warcraft and game assets belong to Blizzard Entertainment.

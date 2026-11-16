@@ -492,6 +492,22 @@ func Run(config Config) error {
 				}
 			}
 			fmt.Fprintf(os.Stderr, "Stand: %d ms, %d bones, animated pose changes: %t\n", duration, len(m.Bones), changed)
+			seam := func(clip int, t uint32) float32 {
+				pose, err := m.PoseBlend(model.Blend{From: model.ClipTime{Clip: clip, Time: t}}, 0, nil)
+				if err != nil {
+					return -1
+				}
+				var worst float32
+				for i := range pose {
+					for _, k := range []int{12, 13, 14} {
+						worst = max(worst, abs32(pose[i][k]-first[i][k]))
+					}
+				}
+				return worst
+			}
+			for i, c := range m.Idles {
+				fmt.Fprintf(os.Stderr, "Idle %d (variation %d): %d ms, seam start %.3f end %.3f\n", i+1, m.Sequences[c.Sequence].Variation, c.Duration, seam(i+1, 0), seam(i+1, c.Duration-1))
+			}
 		}
 	}
 	g.clearColor(0.025, 0.032, 0.045, 1)
@@ -667,7 +683,7 @@ func Run(config Config) error {
 				lines = append(lines, config.Scene.Warnings...)
 			}
 			if help {
-				lines = append(lines, "", "Tab: hide/show input | Ctrl+V: paste | Ctrl+A: clear input", "Enter: profile lookup | F11: fullscreen | Esc: quit", "With input hidden: arrows orbit/zoom | Space: pause | Q: quit", "?: shortcuts | Stand is WoW animation 0 played from the model's own keyframes.")
+				lines = append(lines, "", "Tab: hide/show input | Ctrl+V: paste | Ctrl+A: clear input", "Enter: profile lookup | F11: fullscreen | Esc: quit", "With input hidden: arrows orbit/zoom | Space: pause | Q: quit", "?: shortcuts | Idle: Stand (WoW animation 0) cross-fading into its fidget variations.")
 			}
 			g.drawOverlay(overlay, overlayVAO, overlayTexture, int(width), int(height), lines, foot)
 		}
@@ -937,4 +953,11 @@ func (g gl) screenshot(width, height int32, path string) error {
 		return err
 	}
 	return f.Close()
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

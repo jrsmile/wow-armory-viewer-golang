@@ -22,6 +22,7 @@ type Options struct {
 	TypeImages map[uint32]*image.NRGBA // replaceable type -> pre-composited image
 	TypeFiles  map[uint32]uint32       // replaceable type -> texture FileDataID
 	Cache      *TextureCache
+	Idles      bool // also load the Stand variations (idle fidgets)
 }
 
 // TextureCache shares decoded BLP textures between models.
@@ -120,6 +121,24 @@ func LoadWith(ctx context.Context, files Files, id uint32, opts Options) (*Asset
 		if err == nil {
 			err = m.PrepareStand(animation)
 		}
+	}
+	if err == nil && opts.Idles {
+		for _, v := range m.IdleVariations() {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			var animation []byte
+			if v.FileID != 0 {
+				if animation, err = files.File(ctx, v.FileID); err != nil {
+					a.Warnings = append(a.Warnings, fmt.Sprintf("model %d: idle variation %d skipped: %v", id, v.Sequence, err))
+					continue
+				}
+			}
+			if err = m.AddIdle(v.Sequence, animation); err != nil {
+				a.Warnings = append(a.Warnings, fmt.Sprintf("model %d: idle variation %d skipped: %v", id, v.Sequence, err))
+			}
+		}
+		err = nil
 	}
 	if err != nil {
 		m.StandError = err.Error()

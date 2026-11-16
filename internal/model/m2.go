@@ -38,6 +38,22 @@ type Sequence struct {
 	Duration  uint32
 	Flags     uint32
 	Alias     uint16
+	Frequency int16 // relative chance the client picks this variation
+	BlendIn   uint16
+	BlendOut  uint16
+}
+
+// Clip is an additional animation (an idle fidget) whose bone tracks live in
+// Bone.Idle at the same index.
+type Clip struct {
+	Sequence int
+	Duration uint32
+	BlendIn  uint16
+	BlendOut uint16
+}
+
+type BoneTracks struct {
+	Translation, Rotation, Scale Track
 }
 
 type Track struct {
@@ -55,6 +71,7 @@ type Bone struct {
 	Translation Track
 	Rotation    Track
 	Scale       Track
+	Idle        []BoneTracks // tracks for Model.Idles, same index
 }
 
 // Attachment is a named mount point (helmet, shoulders, hands, ...) on a bone.
@@ -77,6 +94,7 @@ type Model struct {
 	AnimationIDs map[uint32]uint32
 	Stand        int
 	StandError   string
+	Idles        []Clip // Stand variations (fidgets) besides Stand itself
 	Min, Max     Vec3
 	data         []byte
 	chunks       map[string][]byte
@@ -261,7 +279,8 @@ func (m *Model) readSequences(data []byte, loopsHeader, sequencesHeader int) err
 	m.Sequences = make([]Sequence, len(raw)/64)
 	for i := range m.Sequences {
 		r := raw[i*64:]
-		m.Sequences[i] = Sequence{le.Uint16(r), le.Uint16(r[2:]), le.Uint32(r[4:]), le.Uint32(r[12:]), le.Uint16(r[62:])}
+		m.Sequences[i] = Sequence{ID: le.Uint16(r), Variation: le.Uint16(r[2:]), Duration: le.Uint32(r[4:]), Flags: le.Uint32(r[12:]),
+			Alias: le.Uint16(r[62:]), Frequency: int16(le.Uint16(r[16:])), BlendIn: le.Uint16(r[28:]), BlendOut: le.Uint16(r[30:])}
 	}
 	return nil
 }
@@ -347,20 +366,11 @@ func (m *Model) StandFileID() (uint32, error) {
 // PrepareStand reads bones and their Stand animation tracks. With m.Stand < 0
 // it reads the bind pose (plus global-sequence tracks) only.
 func (m *Model) PrepareStand(external []byte) error {
-	valueData := m.boneData
-	if m.Stand >= 0 && m.Sequences[m.Stand].Flags&0x20 == 0 {
-		if len(external) == 0 {
-			return fmt.Errorf("Stand animation file is missing")
-		}
-		valueData = external
-		if len(external) >= 4 && string(external[:4]) == "AFM2" {
-			chunks, err := Chunks(external)
-			if err != nil {
-				return err
-			}
-			valueData = chunks["AFM2"]
-		}
+	valueData, err := m.animData(m.Stand, external)
+	if err != nil {
+		return err
 	}
+	m.Idles = nil
 	raw, err := array(m.boneData, m.boneHeader, 88)
 	if err != nil {
 		return err
@@ -383,15 +393,15 @@ func (m *Model) PrepareStand(external []byte) error {
 				return fmt.Errorf("non-finite bone pivot")
 			}
 		}
-		b.Translation, err = m.readTrack(offset+16, 12, valueData)
+		b.Translation, err = m.readTrack(offset+16, 12, m.Stand, valueData)
 		if err != nil {
 			return fmt.Errorf("bone %d translation: %w", i, err)
 		}
-		b.Rotation, err = m.readTrack(offset+36, 8, valueData)
+		b.Rotation, err = m.readTrack(offset+36, 8, m.Stand, valueData)
 		if err != nil {
 			return fmt.Errorf("bone %d rotation: %w", i, err)
 		}
-		b.Scale, err = m.readTrack(offset+56, 12, valueData)
+		b.Scale, err = m.readTrack(offset+56, 12, m.Stand, valueData)
 		if err != nil {
 			return fmt.Errorf("bone %d scale: %w", i, err)
 		}
@@ -407,7 +417,96 @@ func (m *Model) PrepareStand(external []byte) error {
 	return err
 }
 
-func (m *Model) readTrack(offset, stride int, external []byte) (Track, error) {
+// animData returns the buffer holding keyframes for sequence seq: the bone
+// data itself for in-model sequences, otherwise the external .anim file.
+func (m *Model) animData(seq int, external []byte) ([]byte, error) {
+	if seq < 0 || m.Sequences[seq].Flags&0x20 != 0 {
+		return m.boneData, nil
+	}
+	if len(external) == 0 {
+		return nil, fmt.Errorf("animation file is missing")
+	}
+	if len(external) >= 4 && string(external[:4]) == "AFM2" {
+		chunks, err := Chunks(external)
+		if err != nil {
+			return nil, err
+		}
+		return chunks["AFM2"], nil
+	}
+	return external, nil
+}
+
+// IdleVariation is a Stand variation and the FileDataID of its keyframes
+// (0 when stored inside the model).
+type IdleVariation struct {
+	Sequence int
+	FileID   uint32
+}
+
+// IdleVariations lists the playable Stand (animation 0) variations other
+// than Stand itself: the idle fidgets such as yawning or stretching.
+func (m *Model) IdleVariations() []IdleVariation {
+	var out []IdleVariation
+	seen := map[int]bool{m.Stand: true}
+	for i, s := range m.Sequences {
+		if s.ID != 0 {
+			continue
+		}
+		for hops := 0; m.Sequences[i].Flags&0x40 != 0 && hops < len(m.Sequences); hops++ {
+			if i = int(m.Sequences[i].Alias); i >= len(m.Sequences) {
+				break
+			}
+		}
+		if i >= len(m.Sequences) || seen[i] || m.Sequences[i].Flags&0x40 != 0 || m.Sequences[i].Duration == 0 {
+			continue
+		}
+		seen[i] = true
+		s = m.Sequences[i]
+		v := IdleVariation{Sequence: i}
+		if s.Flags&0x20 == 0 {
+			if v.FileID = m.AnimationIDs[uint32(s.ID)<<16|uint32(s.Variation)]; v.FileID == 0 {
+				continue
+			}
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// AddIdle reads the bone tracks of sequence seq (prepared after Stand) and
+// appends it to Idles.
+func (m *Model) AddIdle(seq int, external []byte) error {
+	if m.Stand < 0 || seq < 0 || seq >= len(m.Sequences) || len(m.Bones) == 0 {
+		return fmt.Errorf("idle sequence unavailable")
+	}
+	valueData, err := m.animData(seq, external)
+	if err != nil {
+		return err
+	}
+	tracks := make([]BoneTracks, len(m.Bones))
+	base := int(le.Uint32(m.boneData[m.boneHeader+4:]))
+	for i := range m.Bones {
+		offset := base + i*88
+		t := &tracks[i]
+		if t.Translation, err = m.readTrack(offset+16, 12, seq, valueData); err != nil {
+			return fmt.Errorf("bone %d translation: %w", i, err)
+		}
+		if t.Rotation, err = m.readTrack(offset+36, 8, seq, valueData); err != nil {
+			return fmt.Errorf("bone %d rotation: %w", i, err)
+		}
+		if t.Scale, err = m.readTrack(offset+56, 12, seq, valueData); err != nil {
+			return fmt.Errorf("bone %d scale: %w", i, err)
+		}
+	}
+	for i := range m.Bones {
+		m.Bones[i].Idle = append(m.Bones[i].Idle, tracks[i])
+	}
+	s := m.Sequences[seq]
+	m.Idles = append(m.Idles, Clip{Sequence: seq, Duration: s.Duration, BlendIn: s.BlendIn, BlendOut: s.BlendOut})
+	return nil
+}
+
+func (m *Model) readTrack(offset, stride, seq int, external []byte) (Track, error) {
 	data := m.boneData
 	t := Track{Interpolation: le.Uint16(data[offset:]), Loop: int16(le.Uint16(data[offset+2:]))}
 	if t.Interpolation > 1 {
@@ -421,7 +520,7 @@ func (m *Model) readTrack(offset, stride int, external []byte) (Track, error) {
 	if err != nil {
 		return t, err
 	}
-	index := m.Stand
+	index := seq
 	valueData := external
 	if index >= 0 && m.Sequences[index].Flags&0x20 != 0 {
 		valueData = data
@@ -513,17 +612,80 @@ func (m *Model) Pose(milliseconds uint32) ([]Mat4, error) {
 	return m.PoseWith(milliseconds, nil)
 }
 
+// ClipTime selects a clip (0: Stand, k: Idles[k-1]) at a time within it.
+type ClipTime struct {
+	Clip int
+	Time uint32
+}
+
+// Blend cross-fades From into To; Weight is To's share in [0, 1].
+type Blend struct {
+	From, To ClipTime
+	Weight   float32
+}
+
+// ClipDuration returns the length of clip c (0: Stand).
+func (m *Model) ClipDuration(c int) uint32 {
+	if c > 0 && c <= len(m.Idles) {
+		return m.Idles[c-1].Duration
+	}
+	if m.Stand >= 0 {
+		return m.Sequences[m.Stand].Duration
+	}
+	return 0
+}
+
 // PoseWith computes bone matrices; bones for which override returns true use
 // the given matrix instead (used to drive a model from another skeleton).
 func (m *Model) PoseWith(milliseconds uint32, override func(int) (Mat4, bool)) ([]Mat4, error) {
+	return m.PoseBlend(Blend{From: ClipTime{Time: milliseconds}}, milliseconds, override)
+}
+
+// PoseBlend evaluates a (possibly cross-faded) clip pose. global drives
+// global-sequence tracks, which loop independently of any clip.
+func (m *Model) PoseBlend(blend Blend, global uint32, override func(int) (Mat4, bool)) ([]Mat4, error) {
 	pose := make([]Mat4, max(1, len(m.Bones)))
 	if len(m.Bones) == 0 {
 		pose[0] = Identity()
 		return pose, nil
 	}
-	ms := milliseconds
-	if m.Stand >= 0 {
-		ms %= m.Sequences[m.Stand].Duration
+	clip := func(c ClipTime) ClipTime {
+		if c.Clip < 0 || c.Clip > len(m.Idles) {
+			c.Clip = 0
+		}
+		if d := m.ClipDuration(c.Clip); d > 0 {
+			c.Time %= d
+		}
+		return c
+	}
+	from, to := clip(blend.From), clip(blend.To)
+	weight := min(max(blend.Weight, 0), 1)
+	standDuration := m.ClipDuration(0)
+	local := func(b *Bone, c ClipTime) (Quat, Quat, Quat) {
+		var idle *BoneTracks
+		if c.Clip > 0 && c.Clip <= len(b.Idle) {
+			idle = &b.Idle[c.Clip-1]
+		}
+		// A fidget that leaves a bone track empty keeps that bone's Stand
+		// animation rather than snapping it to the bind pose.
+		channel := func(base Track, pick func(*BoneTracks) Track, fallback Quat, rotation bool) Quat {
+			t, ms := base, c.Time
+			if idle != nil {
+				if t = pick(idle); len(t.Times) == 0 && len(base.Times) > 0 {
+					t = base
+					if standDuration > 0 {
+						ms %= standDuration
+					}
+				}
+			}
+			if t.Loop >= 0 {
+				ms = global
+			}
+			return m.sample(t, ms, fallback, rotation)
+		}
+		return channel(b.Translation, func(t *BoneTracks) Track { return t.Translation }, Quat{}, false),
+			channel(b.Rotation, func(t *BoneTracks) Track { return t.Rotation }, Quat{0, 0, 0, 1}, true),
+			channel(b.Scale, func(t *BoneTracks) Track { return t.Scale }, Quat{1, 1, 1, 0}, false)
 	}
 	state := make([]byte, len(m.Bones))
 	var visit func(int) error
@@ -542,18 +704,18 @@ func (m *Model) PoseWith(milliseconds uint32, override func(int) (Mat4, bool)) (
 				return nil
 			}
 		}
-		b := m.Bones[i]
+		b := &m.Bones[i]
 		transform := Identity()
 		if b.Flags&0x200 != 0 {
-			trackTime := func(t Track) uint32 {
-				if t.Loop >= 0 {
-					return milliseconds
+			t, r, s := local(b, from)
+			if weight > 0 {
+				t2, r2, s2 := local(b, to)
+				for j := range 3 {
+					t[j] += (t2[j] - t[j]) * weight
+					s[j] += (s2[j] - s[j]) * weight
 				}
-				return ms
+				r = interpolateQuat(normalize(r), normalize(r2), weight)
 			}
-			t := m.sample(b.Translation, trackTime(b.Translation), Quat{}, false)
-			s := m.sample(b.Scale, trackTime(b.Scale), Quat{1, 1, 1, 0}, false)
-			r := m.sample(b.Rotation, trackTime(b.Rotation), Quat{0, 0, 0, 1}, true)
 			transform = Multiply(Translate(Vec3{b.Pivot[0] + t[0], b.Pivot[1] + t[1], b.Pivot[2] + t[2]}),
 				Multiply(Rotation(normalize(r)), Multiply(Scale(Vec3{s[0], s[1], s[2]}), Translate(Vec3{-b.Pivot[0], -b.Pivot[1], -b.Pivot[2]}))))
 		}

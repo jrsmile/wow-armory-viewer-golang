@@ -1,6 +1,9 @@
 package model
 
-import "math"
+import (
+	"math"
+	"time"
+)
 
 // Instance is one model in a character scene.
 type Instance struct {
@@ -21,6 +24,7 @@ type Scene struct {
 	Title     string
 	Instances []*Instance
 	Warnings  []string
+	idle      *IdleCycle
 }
 
 // SingleScene wraps one asset for diagnostic viewing.
@@ -46,8 +50,30 @@ func (s *Scene) Root() *Model {
 	return s.Instances[0].Asset.Model
 }
 
-// Animate evaluates every instance at the given time.
+// Animate evaluates every instance at the given time. The body rotates
+// through Stand and its idle fidgets; ms must grow monotonically (a smaller
+// value restarts the idle cycle).
 func (s *Scene) Animate(ms uint32) (Frame, error) {
+	blend := Blend{From: ClipTime{Time: ms}}
+	if root := s.Root(); root != nil && len(root.Idles) > 0 {
+		if s.idle == nil {
+			s.idle = NewIdleCycle(root, time.Now().UnixNano())
+		}
+		blend = s.idle.At(ms)
+	}
+	return s.animate(blend, ms)
+}
+
+// IdleClip reports the body clip last played by Animate (0: Stand,
+// k: Root().Idles[k-1]).
+func (s *Scene) IdleClip() int {
+	if s.idle == nil {
+		return 0
+	}
+	return s.idle.Clip()
+}
+
+func (s *Scene) animate(blend Blend, ms uint32) (Frame, error) {
 	f := Frame{Poses: make([][]Mat4, len(s.Instances)), Models: make([]Mat4, len(s.Instances))}
 	var root []Mat4
 	for i, in := range s.Instances {
@@ -61,7 +87,13 @@ func (s *Scene) Animate(ms uint32) (Frame, error) {
 				return Mat4{}, false
 			}
 		}
-		pose, err := m.PoseWith(ms, override)
+		var pose []Mat4
+		var err error
+		if i == 0 {
+			pose, err = m.PoseBlend(blend, ms, override)
+		} else {
+			pose, err = m.PoseWith(ms, override)
+		}
 		if err != nil {
 			return f, err
 		}
@@ -115,7 +147,7 @@ func MapBones(m, root *Model) []int {
 func (s *Scene) Bounds(ms uint32) (Vec3, Vec3) {
 	lo := Vec3{math.MaxFloat32, math.MaxFloat32, math.MaxFloat32}
 	hi := Vec3{-math.MaxFloat32, -math.MaxFloat32, -math.MaxFloat32}
-	frame, err := s.Animate(ms)
+	frame, err := s.animate(Blend{From: ClipTime{Time: ms}}, ms)
 	for i, in := range s.Instances {
 		if i > 0 && in.Attached {
 			continue

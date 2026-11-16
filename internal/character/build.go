@@ -123,7 +123,7 @@ func (bl *Builder) Build(ctx context.Context, app Appearance) (*model.Scene, err
 			bodyFiles[2] = uint32(b.bestTexture(fs))
 		}
 	}
-	body, err := model.LoadWith(ctx, b.Files, uint32(bodyFile), model.Options{TypeImages: composites, TypeFiles: bodyFiles, Cache: b.Cache})
+	body, err := model.LoadWith(ctx, b.Files, uint32(bodyFile), model.Options{TypeImages: composites, TypeFiles: bodyFiles, Cache: b.Cache, Idles: true})
 	if err != nil {
 		return nil, fmt.Errorf("body model %d: %w", bodyFile, err)
 	}
