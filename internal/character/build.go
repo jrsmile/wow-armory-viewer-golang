@@ -396,6 +396,11 @@ func (b *build) bodyGeosets(m *model.Model, c customization, items map[int]equip
 			}
 		}
 	}
+	// Group 14 is the underwear loincloth (default or customization-chosen);
+	// worn trousers always cover it.
+	if _, ok := items[SlotLegs]; ok {
+		hideGroup(14)
+	}
 	if it, ok := items[SlotHead]; ok {
 		vis2 := idi.At(it.row, "HelmetGeosetVis", int(b.sex))
 		hgd := b.t["HelmetGeosetData"]
@@ -728,6 +733,10 @@ func (b *build) itemModels(items map[int]equipped, body *model.Model, composites
 				}
 			}
 		}
+		// Gloves with cuffs cover wrist models (e.g. Golden Mobile Timepiece).
+		if hands, ok := items[SlotHands]; ok && it.Slot == SlotWrist && idi.At(hands.row, "GeosetGroup", 0) != 0 {
+			continue
+		}
 		attach := attachmentsBySlot[it.Slot]
 		if it.Slot == SlotOffHand || it.Slot == SlotMainHand {
 			class, _ := b.get("Item", int64(it.ItemID), "ClassID")
@@ -740,7 +749,7 @@ func (b *build) itemModels(items map[int]equipped, body *model.Model, composites
 				attach = []uint32{2}
 			}
 		}
-		for n, p := range parts {
+		for _, p := range parts {
 			files := map[uint32]uint32{}
 			for _, r := range mmr.Where("ItemDisplayInfoID", it.display) {
 				if mmr.Int(r, "ModelIndex") != p.index {
@@ -769,10 +778,17 @@ func (b *build) itemModels(items map[int]equipped, body *model.Model, composites
 			}
 			b.scene.Warnings = append(b.scene.Warnings, a.Warnings...)
 			in := &model.Instance{Name: fmt.Sprintf("slot %d item %d", it.Slot, it.ItemID), Asset: a}
-			if n < len(attach) {
-				at, ok := body.FindAttachment(attach[n])
+			// ModelResourcesID[i] attaches to attachment i; models without an
+			// attachment (e.g. a hood's index 1) are collection models skinned
+			// to the body. Each shoulder slot has a single attachment.
+			ai := int(p.index)
+			if shoulder {
+				ai = 0
+			}
+			if ai < len(attach) {
+				at, ok := body.FindAttachment(attach[ai])
 				if !ok {
-					b.warn("slot %d: body has no attachment %d", it.Slot, attach[n])
+					b.warn("slot %d: body has no attachment %d", it.Slot, attach[ai])
 					continue
 				}
 				in.Attached, in.AttachBone, in.AttachPos = true, at.Bone, at.Position
