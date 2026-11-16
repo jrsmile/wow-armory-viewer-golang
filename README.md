@@ -17,6 +17,7 @@ make build
 ./build/armory open --url https://worldofwarcraft.blizzard.com/en-gb/character/eu/tarren-mill/naowh
 ./build/armory open --url https://worldofwarcraft.blizzard.com/de-de/worldsoul/eu/armory/character/onyxia/taddie
 ./build/armory open            # paste a URL (Ctrl+V) and press Enter
+./build/armory open --bg backdrop.png --url ...   # PNG behind the character
 ```
 
 While a character loads, the bottom of the window lists every CDN URL being
@@ -26,6 +27,8 @@ is hidden (Tab brings the overlay back to enter another URL). The first lookup
 downloads the CDN manifests (hundreds of MB) and DB2 tables; everything is
 cached under `~/.cache/armory/cdn` (`--cache` overrides), so later lookups
 take seconds. `-v` logs downloads and assembly warnings.
+`--bg FILE.png` draws a PNG behind the character, scaled to cover the window
+without distortion (edges are cropped when aspect ratios differ).
 
 ### Where the character comes from
 

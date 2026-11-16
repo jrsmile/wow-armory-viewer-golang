@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -54,6 +56,7 @@ func run(ctx context.Context, args []string) error {
 	output := fs.String("output", "", "new output path; existing files are never overwritten")
 	windowed := fs.Bool("windowed", command == "self-test", "start in a window instead of fullscreen")
 	screenshot := fs.String("screenshot", "", "save self-test framebuffer PNG to a new file")
+	bg := fs.String("bg", "", "PNG image displayed behind the character")
 	verbose := fs.Bool("v", false, "log CDN downloads and assembly warnings")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args); err != nil {
@@ -61,6 +64,13 @@ func run(ctx context.Context, args []string) error {
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments; use --url for Armory URLs")
+	}
+	var background *image.NRGBA
+	if *bg != "" {
+		var err error
+		if background, err = loadPNG(*bg); err != nil {
+			return fmt.Errorf("--bg: %w", err)
+		}
 	}
 	if uint64(*id) > 0xffffffff || uint64(*fileID) > 0xffffffff || uint64(*textureID) > 0xffffffff {
 		return fmt.Errorf("FileDataID exceeds uint32")
@@ -76,12 +86,12 @@ func run(ctx context.Context, args []string) error {
 	sess := &session{cache: *cache, region: *region, log: logf}
 	switch command {
 	case "help":
-		fmt.Println(`armory open [--url URL | --appearance-json FILE | --model FileDataID [--texture FileDataID]] [--windowed] [-v]
+		fmt.Println(`armory open [--url URL | --appearance-json FILE | --model FileDataID [--texture FileDataID]] [--bg FILE.png] [--windowed] [-v]
 armory profile --url URL
 armory cdn-info [--region eu] [--json]
 armory fetch --file FileDataID --output new-file
 armory fetch --ekey HEX --output new-file
-armory self-test [--url URL | --appearance-json FILE | --model FileDataID] [--screenshot new-file.png]
+armory self-test [--url URL | --appearance-json FILE | --model FileDataID] [--bg FILE.png] [--screenshot new-file.png]
 
 The character's current appearance is read from the Blizzard profile API when
 BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET are set, otherwise from a public
@@ -170,9 +180,9 @@ All models, textures and DB2 tables come straight from the Blizzard CDN.`)
 			status = scene.Title
 		}
 		printWarnings(scene)
-		return viewer.Run(viewer.Config{Scene: scene, Fullscreen: !*windowed, SelfTest: true, Screenshot: *screenshot, Status: status})
+		return viewer.Run(viewer.Config{Scene: scene, Fullscreen: !*windowed, SelfTest: true, Screenshot: *screenshot, Status: status, Background: background})
 	case "open":
-		config := viewer.Config{Fullscreen: !*windowed, URL: *url, Progress: &viewer.Progress{}}
+		config := viewer.Config{Fullscreen: !*windowed, URL: *url, Progress: &viewer.Progress{}, Background: background}
 		sess.progress = config.Progress.Report
 		config.Lookup = func(raw string) (*model.Scene, error) {
 			data, err := fetchAppearance(ctx, raw, api)
@@ -206,6 +216,28 @@ All models, textures and DB2 tables come straight from the Blizzard CDN.`)
 	default:
 		return fmt.Errorf("unknown command %q; run armory help", command)
 	}
+}
+
+// loadPNG decodes a PNG file into straight-alpha NRGBA for upload as a texture.
+func loadPNG(path string) (*image.NRGBA, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		return nil, err
+	}
+	if b := img.Bounds(); b.Dx() > 16384 || b.Dy() > 16384 {
+		return nil, fmt.Errorf("image %dx%d exceeds 16384x16384", b.Dx(), b.Dy())
+	}
+	if n, ok := img.(*image.NRGBA); ok && n.Rect.Min == (image.Point{}) {
+		return n, nil
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
+	draw.Draw(out, out.Rect, img, img.Bounds().Min, draw.Src)
+	return out, nil
 }
 
 // session lazily opens the CDN and DB2 tables once and shares them (and the

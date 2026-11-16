@@ -35,6 +35,9 @@ type Config struct {
 	// Progress, when set, is shown as a URL log and progress bar at the
 	// bottom of the window while a lookup is running.
 	Progress *Progress
+	// Background, when set, is drawn behind the character, scaled to cover
+	// the window while keeping its aspect ratio.
+	Background *image.NRGBA
 }
 
 type sdl struct {
@@ -82,6 +85,7 @@ type gl struct {
 	uniformMatrix4fv        func(int32, int32, uint8, unsafe.Pointer)
 	uniform1i               func(int32, int32)
 	uniform1f               func(int32, float32)
+	uniform2f               func(int32, float32, float32)
 	genVertexArrays         func(int32, *uint32)
 	bindVertexArray         func(uint32)
 	deleteVertexArrays      func(int32, *uint32)
@@ -156,7 +160,7 @@ func loadGL(s sdl) (gl, error) {
 		{&g.getShaderiv, "glGetShaderiv"}, {&g.getShaderInfoLog, "glGetShaderInfoLog"}, {&g.deleteShader, "glDeleteShader"},
 		{&g.createProgram, "glCreateProgram"}, {&g.attachShader, "glAttachShader"}, {&g.linkProgram, "glLinkProgram"},
 		{&g.getProgramiv, "glGetProgramiv"}, {&g.getProgramInfoLog, "glGetProgramInfoLog"}, {&g.useProgram, "glUseProgram"}, {&g.deleteProgram, "glDeleteProgram"},
-		{&g.getUniformLocation, "glGetUniformLocation"}, {&g.uniformMatrix4fv, "glUniformMatrix4fv"}, {&g.uniform1i, "glUniform1i"}, {&g.uniform1f, "glUniform1f"},
+		{&g.getUniformLocation, "glGetUniformLocation"}, {&g.uniformMatrix4fv, "glUniformMatrix4fv"}, {&g.uniform1i, "glUniform1i"}, {&g.uniform2f, "glUniform2f"}, {&g.uniform1f, "glUniform1f"},
 		{&g.genVertexArrays, "glGenVertexArrays"}, {&g.bindVertexArray, "glBindVertexArray"}, {&g.deleteVertexArrays, "glDeleteVertexArrays"},
 		{&g.genBuffers, "glGenBuffers"}, {&g.bindBuffer, "glBindBuffer"}, {&g.bufferData, "glBufferData"}, {&g.deleteBuffers, "glDeleteBuffers"},
 		{&g.enableVertexAttribArray, "glEnableVertexAttribArray"}, {&g.vertexAttribPointer, "glVertexAttribPointer"},
@@ -218,10 +222,11 @@ void main() {
     color=vec4(tex.rgb*light,tex.a);
 }`
 const overlayVertex = `#version 330 core
+uniform vec2 scale;
 out vec2 uv;
 void main() {
     vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);
-    uv=vec2(p.x,1.0-p.y);
+    uv=0.5+(vec2(p.x,1.0-p.y)-0.5)*scale;
     gl_Position=vec4(p*2.0-1.0,0,1);
 }`
 const overlayFragment = `#version 330 core
@@ -456,6 +461,11 @@ func Run(config Config) error {
 	g.texParameteri(0x0DE1, 0x2800, 0x2600)
 	g.texParameteri(0x0DE1, 0x2802, 0x812F)
 	g.texParameteri(0x0DE1, 0x2803, 0x812F)
+	var background uint32
+	if config.Background != nil {
+		background = g.texture(config.Background)
+		defer g.deleteTextures(1, &background)
+	}
 	var current *sceneGPU
 	defer func() { g.freeScene(current) }()
 	if config.Scene != nil {
@@ -625,6 +635,9 @@ func Run(config Config) error {
 		}
 		g.viewport(0, 0, width, height)
 		g.clear(0x4000 | 0x100)
+		if background != 0 {
+			g.drawBackground(overlay, overlayVAO, background, config.Background.Rect, width, height)
+		}
 		if current != nil {
 			elapsed := time.Since(start) - pausedDuration
 			if paused {
@@ -879,6 +892,27 @@ func (g gl) drawOverlay(program, vao, texture uint32, width, height int, lines [
 	runtime.KeepAlive(img)
 	g.useProgram(program)
 	g.uniform1i(g.getUniformLocation(program, "diffuse"), 0)
+	g.uniform2f(g.getUniformLocation(program, "scale"), 1, 1)
+	g.bindVertexArray(vao)
+	g.drawArrays(0x0004, 0, 3)
+}
+
+// drawBackground fills the window with img, cropping the longer side
+// ("cover") so the image is never distorted.
+func (g gl) drawBackground(program, vao, texture uint32, img image.Rectangle, width, height int32) {
+	sx, sy := float32(1), float32(1)
+	if ia, wa := float32(img.Dx())/float32(img.Dy()), float32(width)/float32(height); ia > wa {
+		sx = wa / ia
+	} else {
+		sy = ia / wa
+	}
+	g.disable(0x0B71)
+	g.disable(0x0BE2)
+	g.activeTexture(0x84C0)
+	g.bindTexture(0x0DE1, texture)
+	g.useProgram(program)
+	g.uniform1i(g.getUniformLocation(program, "diffuse"), 0)
+	g.uniform2f(g.getUniformLocation(program, "scale"), sx, sy)
 	g.bindVertexArray(vao)
 	g.drawArrays(0x0004, 0, 3)
 }
