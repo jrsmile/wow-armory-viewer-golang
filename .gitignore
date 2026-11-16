@@ -2,3 +2,4 @@
 /.cache/
 /.env
 *.test
+/internal/viewer/runtime/windows-amd64/

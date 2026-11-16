@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (windows && amd64)
 
 package viewer
 
@@ -42,6 +42,7 @@ type Config struct {
 }
 
 type sdl struct {
+	setMainReady        func()
 	init                func(uint32) int32
 	quit                func()
 	createWindow        func(string, int32, int32, int32, int32, uint32) uintptr
@@ -132,7 +133,7 @@ func cString(ptr unsafe.Pointer) string {
 }
 
 func loadSDL() (sdl, uintptr, error) {
-	lib, err := purego.Dlopen("libSDL2-2.0.so.0", purego.RTLD_NOW|purego.RTLD_LOCAL)
+	lib, err := openSDL()
 	if err != nil {
 		return sdl{}, 0, fmt.Errorf("SDL2 runtime missing: %w", err)
 	}
@@ -141,6 +142,7 @@ func loadSDL() (sdl, uintptr, error) {
 		target any
 		name   string
 	}{
+		{&s.setMainReady, "SDL_SetMainReady"},
 		{&s.init, "SDL_Init"}, {&s.quit, "SDL_Quit"}, {&s.createWindow, "SDL_CreateWindow"}, {&s.destroyWindow, "SDL_DestroyWindow"},
 		{&s.glSetAttribute, "SDL_GL_SetAttribute"}, {&s.glCreateContext, "SDL_GL_CreateContext"},
 		{&s.glDeleteContext, "SDL_GL_DeleteContext"}, {&s.glGetProcAddress, "SDL_GL_GetProcAddress"},
@@ -359,6 +361,7 @@ void main() {
     }
     color=vec4(lit+glow,opacity);
 }`
+
 // Particles are pre-expanded view-space quads (see model.ParticleSystem),
 // unlit and tinted by their age curves.
 const particleVertex = `#version 330 core
@@ -543,10 +546,10 @@ type sceneGPU struct {
 	// drawn through one streaming vertex buffer.
 	particles  []*model.ParticleSystem
 	pvao, pvbo uint32
-	cache  textureCache
-	white  uint32 // bound to unused combiner texture units
-	center model.Vec3
-	radius float32
+	cache      textureCache
+	white      uint32 // bound to unused combiner texture units
+	center     model.Vec3
+	radius     float32
 }
 
 func (g gl) uploadScene(sc *model.Scene) (*sceneGPU, error) {
@@ -603,7 +606,8 @@ func Run(config Config) error {
 	if err != nil {
 		return err
 	}
-	defer purego.Dlclose(lib)
+	defer closeSDL(lib)
+	s.setMainReady()
 	if s.init(0x20) != 0 {
 		return fmt.Errorf("SDL initialization: %s", cString(s.getError()))
 	}

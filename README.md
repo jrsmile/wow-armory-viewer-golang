@@ -5,7 +5,8 @@ Blizzard Armory character URL and the character is assembled from the live
 retail game data on Blizzard's CDN and displayed fullscreen in its native idle: the **Stand** loop, rotating
 through the race's idle fidgets (yawning, stretching, looking around, ...).
 
-Linux, Go 1.25+, the SDL2 runtime and an OpenGL 3.3 driver are required. The
+Linux or Windows 11 x64, Go 1.25+ to build, and an OpenGL 3.3 driver are
+required. Linux needs the SDL2 runtime; the Windows build embeds it. The
 binary builds with `CGO_ENABLED=0`: Go calls SDL2/OpenGL through purego.
 There is no browser, hosted renderer, local WoW install or C++ helper, and no
 Blizzard assets are bundled.
@@ -30,6 +31,42 @@ cached under `~/.cache/armory/cdn` (`--cache` overrides), so later lookups
 take seconds. `-v` logs downloads and assembly warnings.
 `--bg FILE.png` draws a PNG behind the character, scaled to cover the window
 without distortion (edges are cropped when aspect ratios differ).
+
+### Cross-compiling a standalone Windows 11 executable on Linux
+
+The Windows port shares the SDL2/OpenGL renderer with Linux; only runtime
+library loading differs. The compilation and validation plan is:
+
+1. Use Go 1.25+, GNU Make, `curl`, `sha256sum`, and `unzip` on Linux.
+   No MinGW, Windows SDK, C compiler, or system SDL2 is needed for this target.
+2. Run `make build-windows` (alias: `make windows`). It downloads the official
+   SDL2 2.32.10 x64 runtime, verifies its pinned SHA-256, extracts the DLL and
+   distribution notice into an ignored embedding directory, and cross-compiles
+   with `GOOS=windows GOARCH=amd64 CGO_ENABLED=0`.
+3. Copy **only `build/armory-windows-amd64.exe`** to Windows 11 x64. SDL2 and its
+   notice are embedded: at startup the viewer extracts them into a private
+   temporary directory under `%LOCALAPPDATA%\armory\runtime`, loads the DLL
+   using its absolute path, and removes that directory on normal viewer exit.
+   An interrupted process can leave its runtime directory behind. No SDL
+   installation or DLL beside the EXE is needed.
+4. On Windows, install the GPU vendor's driver with OpenGL 3.3 support, then
+   smoke-test the window, shaders, input, and screenshot from PowerShell:
+
+   ```powershell
+   .\armory-windows-amd64.exe self-test --screenshot smoke.png
+   .\armory-windows-amd64.exe open --url "https://worldofwarcraft.blizzard.com/de-de/worldsoul/eu/armory/character/onyxia/taddie"
+   ```
+
+   Use a new screenshot path. Verify fullscreen/F11, clipboard paste, and
+   `--bg` as well. Cross-compilation alone does not validate Windows graphics.
+
+The EXE retains its console for CLI commands and diagnostic errors.
+It still needs internet access to obtain game assets and a writable cache
+under `%LOCALAPPDATA%\armory\cdn` (or `--cache`). The embedded SDL2 runtime
+uses the zlib license; its upstream distribution notice is embedded and
+extracted alongside it. Generated runtime files and binaries are not committed.
+Changing SDL2 versions requires updating both the version and checksum in the
+Makefile. The target currently supports Windows **amd64 only**, not ARM64.
 
 ### Where the character comes from
 
@@ -150,7 +187,8 @@ WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 - A few cosmetic details differ from the game, e.g. legacy textures at robe
   hems, and the in-game zone lighting, shadows and bloom (the viewer uses
   Wowhead's fixed studio lighting).
-- Linux only; encrypted CDN content fails explicitly (no keys are obtained).
+- Windows runtime/graphics behavior still needs native Windows smoke testing;
+  encrypted CDN content fails explicitly (no keys are obtained).
 
 ## Keyboard
 
