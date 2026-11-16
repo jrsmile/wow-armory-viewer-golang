@@ -13,10 +13,15 @@ import (
 	"unicode"
 )
 
+// GameForever marks a World of Warcraft: Forever character. Forever is
+// realmless: characters are addressed by a "<name>-<surname>" slug.
+const GameForever = "forever"
+
 type CharacterURL struct {
 	Region string `json:"region"`
 	Realm  string `json:"realm"`
 	Name   string `json:"name"`
+	Game   string `json:"game,omitempty"` // "" (retail) or GameForever
 }
 
 func ParseArmoryURL(raw string) (CharacterURL, error) {
@@ -29,21 +34,28 @@ func ParseArmoryURL(raw string) (CharacterURL, error) {
 	// Classic layout: /<locale>/character/<region>/<realm>/<name>
 	// Current layout: /<locale>/<section>/<region>/armory/character/<realm>/<name>
 	// (e.g. /de-de/worldsoul/eu/armory/character/onyxia/taddie).
-	var region, realm, name string
+	// Forever layout: /<locale>/forever/<region>/armory/character/<name>-<surname>
+	var region, realm, name, game string
 	switch parts := strings.Split(strings.Trim(u.Path, "/"), "/"); {
 	case len(parts) == 5 && parts[1] == "character":
 		region, realm, name = parts[2], parts[3], parts[4]
 	case len(parts) == 7 && parts[3] == "armory" && parts[4] == "character":
 		region, realm, name = parts[2], parts[5], parts[6]
+	case len(parts) == 6 && parts[1] == GameForever && parts[3] == "armory" && parts[4] == "character":
+		region, name, game = parts[2], parts[5], GameForever
 	default:
-		return character, fmt.Errorf("expected /<locale>/character/<region>/<realm>/<name> or /<locale>/<section>/<region>/armory/character/<realm>/<name>")
+		return character, fmt.Errorf("expected /<locale>/character/<region>/<realm>/<name>, /<locale>/<section>/<region>/armory/character/<realm>/<name> or /<locale>/forever/<region>/armory/character/<name>-<surname>")
 	}
 	switch region {
 	case "us", "eu", "kr", "tw":
 	default:
 		return character, fmt.Errorf("only retail us, eu, kr, and tw profiles are supported")
 	}
-	for _, value := range []string{realm, name} {
+	values := []string{realm, name}
+	if game == GameForever {
+		values = values[1:]
+	}
+	for _, value := range values {
 		if value == "" || value == "." || value == ".." || len(value) > 128 {
 			return character, fmt.Errorf("invalid character or realm slug")
 		}
@@ -53,7 +65,7 @@ func ParseArmoryURL(raw string) (CharacterURL, error) {
 			}
 		}
 	}
-	return CharacterURL{region, strings.ToLower(realm), strings.ToLower(name)}, nil
+	return CharacterURL{region, strings.ToLower(realm), strings.ToLower(name), game}, nil
 }
 
 type Client struct {
@@ -66,9 +78,12 @@ type Client struct {
 	// queried with region, realm and character parameters when no client
 	// credentials are configured. Empty disables the fallback.
 	ProxyURL string
-	mu       sync.Mutex
-	token    string
-	expires  time.Time
+	// WebBase is the Armory website used for Forever profiles; empty means
+	// DefaultWebBase.
+	WebBase string
+	mu      sync.Mutex
+	token   string
+	expires time.Time
 }
 
 func New(id, secret string) *Client {
@@ -144,6 +159,9 @@ func (c *Client) HasCredentials() bool { return c.ClientID != "" && c.ClientSecr
 // AppearanceJSON returns the character's current /appearance document
 // (race, gender, customization choices and transmogrified item appearances).
 func (c *Client) AppearanceJSON(ctx context.Context, character CharacterURL) ([]byte, error) {
+	if character.Game == GameForever {
+		return c.foreverAppearance(ctx, character)
+	}
 	var u, token string
 	if c.HasCredentials() || c.ProxyURL == "" {
 		var err error

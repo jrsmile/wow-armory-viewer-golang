@@ -24,7 +24,15 @@ type Build struct {
 	CDN         string `json:"cdn"`
 }
 
+// TACT product codes of the games whose characters can be displayed.
+const (
+	ProductRetail  = "wow"
+	ProductForever = "wowf" // World of Warcraft: Forever
+)
+
 type Client struct {
+	// Product is the TACT product code; empty means ProductRetail.
+	Product   string
 	HTTP      *http.Client
 	Cache     string
 	Build     Build
@@ -64,7 +72,11 @@ func (c *Client) Discover(ctx context.Context, region string) error {
 	default:
 		return fmt.Errorf("unsupported CDN region %q", region)
 	}
-	base := "https://us.version.battle.net/v2/products/wow/"
+	product := c.Product
+	if product == "" {
+		product = ProductRetail
+	}
+	base := "https://us.version.battle.net/v2/products/" + product + "/"
 	versions, err := c.fetch(ctx, base+"versions", "", 1<<20)
 	if err != nil {
 		return err

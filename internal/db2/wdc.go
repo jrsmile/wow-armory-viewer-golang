@@ -235,6 +235,14 @@ func Parse(name string, data []byte, fields []Field) (t *Table, err error) {
 
 	// Map DBD fields to storage columns.
 	t = &Table{Name: name, columns: map[string]column{}, byID: map[uint32]int{}}
+	if recordCount == 0 && len(infos) == 0 {
+		// Empty tables (e.g. in WoW Forever) carry no storage info at all.
+		for _, f := range fields {
+			t.columns[f.Name] = column{offset: t.stride, count: f.Count, float: f.Float}
+			t.stride += f.Count
+		}
+		return t, nil
+	}
 	type binding struct {
 		col      column
 		field    Field

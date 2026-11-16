@@ -124,3 +124,18 @@ func TestParseWDC3(t *testing.T) {
 		t.Error("truncated file accepted")
 	}
 }
+
+// WoW Forever ships some tables with no records and no storage info.
+func TestParseEmptyTable(t *testing.T) {
+	fields, err := ParseDBD(testDBD, "1234ABCD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	b.WriteString("WDC3")
+	binary.Write(&b, binary.LittleEndian, [17]uint32{0, 2, 0, 0, 0xAAAA, 0x1234ABCD, 0, 0, 0xFFFFFFFF, 4, 2})
+	tbl, err := Parse("Empty", b.Bytes(), fields)
+	if err != nil || tbl.Len() != 0 || len(tbl.Where("Kind", 0)) != 0 || tbl.Lookup(1) != -1 {
+		t.Fatal(tbl, err)
+	}
+}

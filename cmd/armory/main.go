@@ -47,7 +47,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	cache := fs.String("cache", filepath.Join(cacheBase, "armory", "cdn"), "content-addressed cache directory")
 	region := fs.String("region", "us", "Blizzard region: us, eu, kr, tw")
-	url := fs.String("url", "", "retail Armory URL")
+	url := fs.String("url", "", "Armory character URL (retail or WoW Forever)")
 	id := fs.Uint("model", 0, "M2 FileDataID to view a single raw model instead of a character")
 	appearanceFile := fs.String("appearance-json", "", "local Blizzard /appearance JSON document to assemble instead of fetching --url")
 	fileID := fs.Uint("file", 0, "FileDataID to extract")
@@ -83,7 +83,7 @@ func run(ctx context.Context, args []string) error {
 	if *verbose {
 		logf = func(s string) { fmt.Fprintln(os.Stderr, s) }
 	}
-	sess := &session{cache: *cache, region: *region, log: logf}
+	sess := &games{cache: *cache, region: *region, log: logf}
 	switch command {
 	case "help":
 		fmt.Println(`armory open [--url URL | --appearance-json FILE | --model FileDataID [--texture FileDataID]] [--bg FILE.png] [--windowed] [-v]
@@ -96,6 +96,8 @@ armory self-test [--url URL | --appearance-json FILE | --model FileDataID] [--bg
 The character's current appearance is read from the Blizzard profile API when
 BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET are set, otherwise from a public
 pass-through (ARMORY_APPEARANCE_PROXY overrides it; empty disables it).
+WoW Forever URLs (/forever/<region>/armory/character/<name-surname>) are read
+from the public profile model.json and assembled from the "wowf" CDN product.
 All models, textures and DB2 tables come straight from the Blizzard CDN.`)
 		return nil
 	case "profile":
@@ -240,10 +242,51 @@ func loadPNG(path string) (*image.NRGBA, error) {
 	return out, nil
 }
 
+// games keeps one session per TACT product, so retail and World of
+// Warcraft: Forever characters each load from their own game build.
+type games struct {
+	cache, region string
+	log           func(string)
+	progress      func(url string, done, total int64, err error)
+	mu            sync.Mutex
+	sessions      map[string]*session
+}
+
+func (g *games) session(product string) *session {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.sessions == nil {
+		g.sessions = map[string]*session{}
+	}
+	s := g.sessions[product]
+	if s == nil {
+		s = &session{cache: g.cache, region: g.region, product: product, log: g.log, progress: g.progress}
+		g.sessions[product] = s
+	}
+	return s
+}
+
+func (g *games) model(ctx context.Context, id, texture uint32) (*model.Scene, error) {
+	return g.session(tact.ProductRetail).model(ctx, id, texture)
+}
+
+func (g *games) character(ctx context.Context, appearance []byte) (*model.Scene, error) {
+	app, err := character.ParseArmory(appearance)
+	if err != nil {
+		return nil, err
+	}
+	product := tact.ProductRetail
+	if app.Game == blizzard.GameForever {
+		product = tact.ProductForever
+	}
+	return g.session(product).character(ctx, app)
+}
+
 // session lazily opens the CDN and DB2 tables once and shares them (and the
 // texture cache) between character lookups.
 type session struct {
 	cache, region string
+	product       string // TACT product; empty means retail
 	log           func(string)
 	progress      func(url string, done, total int64, err error)
 	once          sync.Once
@@ -257,6 +300,7 @@ type session struct {
 func (s *session) open(ctx context.Context) error {
 	s.once.Do(func() {
 		s.client = tact.New(s.cache)
+		s.client.Product = s.product
 		s.client.Log = s.log
 		s.client.Progress = s.progress
 		if s.err = s.client.Discover(ctx, s.region); s.err != nil {
@@ -281,11 +325,7 @@ func (s *session) model(ctx context.Context, id, texture uint32) (*model.Scene, 
 	return model.SingleScene(asset, fmt.Sprintf("FileDataID %d / build %s", id, s.client.Build.Version)), nil
 }
 
-func (s *session) character(ctx context.Context, appearance []byte) (*model.Scene, error) {
-	app, err := character.ParseArmory(appearance)
-	if err != nil {
-		return nil, err
-	}
+func (s *session) character(ctx context.Context, app character.Appearance) (*model.Scene, error) {
 	if err := s.open(ctx); err != nil {
 		return nil, err
 	}

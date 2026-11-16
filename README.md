@@ -16,6 +16,7 @@ Blizzard assets are bundled.
 make build
 ./build/armory open --url https://worldofwarcraft.blizzard.com/en-gb/character/eu/tarren-mill/naowh
 ./build/armory open --url https://worldofwarcraft.blizzard.com/de-de/worldsoul/eu/armory/character/onyxia/taddie
+./build/armory open --url https://worldofwarcraft.blizzard.com/de-de/forever/eu/armory/character/taddie-eule
 ./build/armory open            # paste a URL (Ctrl+V) and press Enter
 ./build/armory open --bg backdrop.png --url ...   # PNG behind the character
 ```
@@ -46,6 +47,13 @@ appearance in each slot. It is fetched
 “Current” means the profile Blizzard last published (updated on logout).
 Private or unknown characters produce an error. A saved document can be
 rendered offline with `--appearance-json FILE`.
+
+**WoW Forever** characters (`/<locale>/forever/<region>/armory/character/<name-surname>`,
+no realm) are read from the public profile JSON at `<profile URL>/model.json`
+(race, sex, class and transmogrified gear) and assembled from the Forever game
+data (TACT product `wowf`) instead of retail (`wow`). Forever profiles do not
+publish customization choices, so skin, face and hair use the race's default
+look. Both games can be viewed in one session; each keeps its own CDN state.
 
 Only the appearance document comes from a web API. Models, textures,
 animations and game tables come straight from Blizzard's CDN.

@@ -19,7 +19,7 @@ func TestParseArmoryURL(t *testing.T) {
 		}
 	}
 	got, err := ParseArmoryURL("https://worldofwarcraft.blizzard.com/de-de/worldsoul/eu/armory/character/onyxia/Taddie")
-	if err != nil || got != (CharacterURL{"eu", "onyxia", "taddie"}) {
+	if err != nil || got != (CharacterURL{"eu", "onyxia", "taddie", ""}) {
 		t.Fatal(got, err)
 	}
 	for _, raw := range []string{
@@ -62,7 +62,7 @@ func TestOfficialAppearanceAndTokenReuse(t *testing.T) {
 	c.OAuthURL, c.APIBase = server.URL+"/token", func(string) string { return server.URL }
 	c.ProxyURL = "http://proxy.invalid" // credentials take precedence
 	for range 2 {
-		data, err := c.AppearanceJSON(context.Background(), CharacterURL{"eu", "realm", "example"})
+		data, err := c.AppearanceJSON(context.Background(), CharacterURL{"eu", "realm", "example", ""})
 		if err != nil || !strings.Contains(string(data), `"id":20`) {
 			t.Fatal(string(data), err)
 		}
@@ -83,7 +83,7 @@ func TestAppearanceProxyWithoutCredentials(t *testing.T) {
 	defer server.Close()
 	c := New("", "")
 	c.ProxyURL = server.URL
-	data, err := c.AppearanceJSON(context.Background(), CharacterURL{"eu", "tarren-mill", "naowh"})
+	data, err := c.AppearanceJSON(context.Background(), CharacterURL{"eu", "tarren-mill", "naowh", ""})
 	if err != nil || !strings.Contains(string(data), `"id":10`) {
 		t.Fatal(string(data), err)
 	}
@@ -92,8 +92,38 @@ func TestAppearanceProxyWithoutCredentials(t *testing.T) {
 func TestMissingCredentials(t *testing.T) {
 	c := New("", "")
 	c.ProxyURL = ""
-	_, err := c.AppearanceJSON(context.Background(), CharacterURL{"us", "realm", "test"})
+	_, err := c.AppearanceJSON(context.Background(), CharacterURL{"us", "realm", "test", ""})
 	if err == nil || !strings.Contains(err.Error(), "BLIZZARD_CLIENT_ID") {
 		t.Fatal(err)
+	}
+}
+
+func TestForeverAppearance(t *testing.T) {
+	got, err := ParseArmoryURL("https://worldofwarcraft.blizzard.com/de-de/forever/eu/armory/character/Taddie-Eule")
+	if err != nil || got != (CharacterURL{"eu", "", "taddie-eule", GameForever}) {
+		t.Fatal(got, err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/en-us/forever/eu/armory/character/taddie-eule/model.json" {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		fmt.Fprint(w, `{"character":{"name":"Taddie","surname":"Eule","race":{"id":6},"class":{"id":11},
+			"gender":{"enum":"MALE"},"gear":{
+			"back":{"id":5,"slot":{"type":"BACK"},"transmog":{"item":{"id":134110}}},
+			"head":{"id":7,"slot":{"type":"HEAD"}},
+			"finger1":{"id":9,"slot":{"type":"FINGER_1"}}}}}`)
+	}))
+	defer server.Close()
+	c := New("", "")
+	c.ProxyURL, c.WebBase = "", server.URL
+	data, err := c.AppearanceJSON(context.Background(), got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"items":[{"id":7,"internal_slot_id":0,"item_appearance_modifier_id":0},{"id":134110,"internal_slot_id":14,"item_appearance_modifier_id":0}]`
+	for _, s := range []string{want, `"game":"forever"`, `"name":"Taddie Eule"`, `"playable_race":{"id":6}`, `"type":"MALE"`} {
+		if !strings.Contains(string(data), s) {
+			t.Fatalf("missing %s in %s", s, data)
+		}
 	}
 }

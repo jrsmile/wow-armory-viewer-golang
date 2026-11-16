@@ -15,6 +15,7 @@ type Item struct {
 
 // Appearance is everything needed to assemble a character model.
 type Appearance struct {
+	Game    string // "" (retail) or "forever" (World of Warcraft: Forever)
 	Name    string
 	Race    int
 	Class   int
@@ -43,6 +44,7 @@ const (
 
 // armoryJSON is the Blizzard profile API /appearance document.
 type armoryJSON struct {
+	Game      string `json:"game"` // set by the Forever profile adapter
 	Character struct {
 		Name string `json:"name"`
 	} `json:"character"`
@@ -81,7 +83,7 @@ func ParseArmory(data []byte) (Appearance, error) {
 	if j.Race.ID == 0 || j.Gender.Type == "" {
 		return Appearance{}, fmt.Errorf("appearance JSON lacks playable_race or gender")
 	}
-	a := Appearance{Name: j.Character.Name, Race: j.Race.ID, Class: j.Class.ID,
+	a := Appearance{Game: j.Game, Name: j.Character.Name, Race: j.Race.ID, Class: j.Class.ID,
 		Female: strings.EqualFold(j.Gender.Type, "FEMALE"), Choices: map[int]int{}}
 	for _, c := range j.Customizations {
 		a.Choices[c.Option.ID] = c.Choice.ID
