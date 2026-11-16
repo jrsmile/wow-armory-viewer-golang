@@ -13,10 +13,13 @@ type Instance struct {
 	// BoneMap maps this model's bones onto the scene root skeleton (-1: own
 	// animation). Used for skinned customization and collection models.
 	BoneMap []int
-	// Attachment parents the model to a root bone at a local offset.
+	// Attachment parents the model to a bone at a local offset. The bone
+	// belongs to the body unless Parent names an earlier instance (index+1),
+	// e.g. an enchant effect on a weapon's attachment point.
 	Attached   bool
 	AttachBone int
 	AttachPos  Vec3
+	Parent     int
 }
 
 // Scene is an assembled character; Instances[0] is the body (root skeleton).
@@ -102,7 +105,15 @@ func (s *Scene) animate(blend Blend, ms uint32) (Frame, error) {
 		}
 		f.Poses[i] = pose
 		f.Models[i] = Identity()
-		if in.Attached && root != nil && in.AttachBone < len(root) {
+		switch {
+		case in.Attached && in.Parent > 0 && in.Parent <= i:
+			p := in.Parent - 1
+			f.Models[i] = f.Models[p]
+			if in.AttachBone < len(f.Poses[p]) {
+				f.Models[i] = Multiply(f.Models[i], f.Poses[p][in.AttachBone])
+			}
+			f.Models[i] = Multiply(f.Models[i], Translate(in.AttachPos))
+		case in.Attached && root != nil && in.AttachBone < len(root):
 			f.Models[i] = Multiply(root[in.AttachBone], Translate(in.AttachPos))
 		}
 	}

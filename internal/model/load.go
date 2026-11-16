@@ -76,15 +76,16 @@ func LoadWith(ctx context.Context, files Files, id uint32, opts Options) (*Asset
 	if err != nil {
 		return nil, err
 	}
-	if len(m.SkinIDs) == 0 {
+	switch {
+	case len(m.SkinIDs) > 0:
+		if raw, err = files.File(ctx, m.SkinIDs[0]); err != nil {
+			return nil, err
+		}
+		if err = m.SetSkin(raw); err != nil {
+			return nil, err
+		}
+	case len(m.Vertices) > 0:
 		return nil, fmt.Errorf("model has no SFID; filename-based legacy skins are not implemented")
-	}
-	raw, err = files.File(ctx, m.SkinIDs[0])
-	if err != nil {
-		return nil, err
-	}
-	if err = m.SetSkin(raw); err != nil {
-		return nil, err
 	}
 	if m.SkeletonID != 0 {
 		raw, err = files.File(ctx, m.SkeletonID)
@@ -112,6 +113,15 @@ func LoadWith(ctx context.Context, files Files, id uint32, opts Options) (*Asset
 		}
 	}
 	a := &Asset{Model: m, Textures: make([]*image.NRGBA, len(m.Textures))}
+	if m.EffectAnimID != 0 {
+		raw, err := files.File(ctx, m.EffectAnimID)
+		if err == nil {
+			err = m.SetEffectAnimation(raw)
+		}
+		if err != nil {
+			a.Warnings = append(a.Warnings, fmt.Sprintf("model %d: material/particle animation %d: %v", id, m.EffectAnimID, err))
+		}
+	}
 	animID, err := m.StandFileID()
 	if err == nil {
 		var animation []byte

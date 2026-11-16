@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"sort"
 )
 
 var le = binary.LittleEndian
@@ -15,6 +14,7 @@ type Vertex struct {
 	Bones    [4]byte
 	Normal   Vec3
 	UV       [2]float32
+	UV2      [2]float32
 }
 
 type Texture struct {
@@ -27,9 +27,22 @@ type Batch struct {
 	Start   int
 	Count   int
 	Geoset  uint16
-	Texture int
-	Blend   uint16
-	Flags   uint16
+	Texture int    // first texture slot (model texture index)
+	Blend   uint16 // material blend mode
+	Flags   uint16 // material render flags
+
+	// Material combiner state (see material.go).
+	ShaderID     uint16
+	TextureCount int
+	Textures     [4]int // model texture slots, -1: unused
+	TexMatrix    [2]int // texture transform per UV set, -1: identity
+	Weights      [4]int // texture weight (transparency) per texture, -1: 1.0
+	Color        int    // mesh colour, -1: white
+	BatchFlags   uint8
+	Priority     int8
+	Layer        uint16
+	PixelShader  int
+	VertexShader int
 }
 
 type Sequence struct {
@@ -95,12 +108,17 @@ type Model struct {
 	Stand        int
 	StandError   string
 	Idles        []Clip // Stand variations (fidgets) besides Stand itself
+	// EffectAnimID is the .anim file with the model file's own Stand
+	// keyframes for material and particle tracks (0: stored in the model).
+	EffectAnimID uint32
+	Emitters     []Emitter
 	Min, Max     Vec3
 	data         []byte
 	chunks       map[string][]byte
 	loops        []uint32
 	boneData     []byte
 	boneHeader   int
+	effects      effectTracks
 }
 
 func Chunks(data []byte) (map[string][]byte, error) {
@@ -172,7 +190,7 @@ func ParseM2(raw []byte) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(vertices) == 0 || len(vertices)/48 > 1_000_000 {
+	if len(vertices)/48 > 1_000_000 {
 		return nil, fmt.Errorf("invalid vertex count")
 	}
 	m.Vertices = make([]Vertex, len(vertices)/48)
@@ -183,6 +201,9 @@ func ParseM2(raw []byte) (*Model, error) {
 		copy(v.Weights[:], raw[12:16])
 		copy(v.Bones[:], raw[16:20])
 		v.UV = [2]float32{f32(raw, 32), f32(raw, 36)}
+		if v.UV2 = [2]float32{f32(raw, 40), f32(raw, 44)}; !finite(v.UV2[0]) || !finite(v.UV2[1]) {
+			v.UV2 = [2]float32{}
+		}
 		for j, p := range v.Position {
 			if !finite(p) || !finite(v.Normal[j]) {
 				return nil, fmt.Errorf("non-finite vertex")
@@ -225,6 +246,13 @@ func ParseM2(raw []byte) (*Model, error) {
 	}
 	if m.Attachments, err = readAttachments(data, 0xF0); err != nil {
 		return nil, err
+	}
+	m.readEffects()
+	if len(m.Vertices) == 0 && len(m.Emitters) == 0 {
+		return nil, fmt.Errorf("model has neither vertices nor particle emitters")
+	}
+	if len(m.Vertices) == 0 {
+		m.Min, m.Max = Vec3{}, Vec3{}
 	}
 	return m, nil
 }
@@ -584,28 +612,7 @@ func (m *Model) readTrack(offset, stride, seq int, external []byte) (Track, erro
 }
 
 func (m *Model) sample(t Track, ms uint32, fallback Quat, rotation bool) Quat {
-	if len(t.Times) == 0 {
-		return fallback
-	}
-	if t.Loop >= 0 {
-		ms %= m.loops[t.Loop]
-	}
-	i := sort.Search(len(t.Times), func(i int) bool { return t.Times[i] > ms }) - 1
-	if i < 0 {
-		return t.Values[0]
-	}
-	if i == len(t.Times)-1 || t.Interpolation == 0 {
-		return t.Values[i]
-	}
-	f := float32(ms-t.Times[i]) / float32(t.Times[i+1]-t.Times[i])
-	if rotation {
-		return interpolateQuat(t.Values[i], t.Values[i+1], f)
-	}
-	var result Quat
-	for j := range result {
-		result[j] = t.Values[i][j] + (t.Values[i+1][j]-t.Values[i][j])*f
-	}
-	return result
+	return sampleTrack(t, ms, m.loops, fallback, rotation)
 }
 
 func (m *Model) Pose(milliseconds uint32) ([]Mat4, error) {
@@ -794,7 +801,55 @@ func (m *Model) SetSkin(data []byte) error {
 		if start > len(m.Indices) || count > len(m.Indices)-start || count%3 != 0 || texture >= len(m.Textures) {
 			return fmt.Errorf("SKIN batch range exceeds bounds")
 		}
-		m.Batches = append(m.Batches, Batch{start, count, le.Uint16(s), texture, le.Uint16(materials[material*4+2:]), le.Uint16(materials[material*4:])})
+		b := Batch{Start: start, Count: count, Geoset: le.Uint16(s), Texture: texture,
+			Blend: le.Uint16(materials[material*4+2:]), Flags: le.Uint16(materials[material*4:]),
+			BatchFlags: batch[0], Priority: int8(batch[1]), ShaderID: le.Uint16(batch[2:]),
+			Layer: le.Uint16(batch[12:]), TextureCount: int(le.Uint16(batch[14:])),
+			Textures: [4]int{texture, -1, -1, -1}, TexMatrix: [2]int{-1, -1}, Weights: [4]int{-1, -1, -1, -1}, Color: -1}
+		m.material(&b, batch, textureLookup)
+		m.Batches = append(m.Batches, b)
 	}
 	return nil
+}
+
+// material resolves a skin batch's combiner state against the model's
+// lookup tables. References outside the tables keep their defaults.
+func (m *Model) material(b *Batch, batch, textureLookup []byte) {
+	lookup := func(header, index int) int {
+		table, err := array(m.data, header, 2)
+		if err != nil || index < 0 || index >= len(table)/2 {
+			return -1
+		}
+		return int(int16(le.Uint16(table[index*2:])))
+	}
+	combo := int(le.Uint16(batch[16:]))
+	count := min(b.TextureCount, 4)
+	for j := 1; j < count; j++ {
+		if k := combo + j; k < len(textureLookup)/2 {
+			if t := int(le.Uint16(textureLookup[k*2:])); t < len(m.Textures) {
+				b.Textures[j] = t
+			}
+		}
+	}
+	if c := int(int16(le.Uint16(batch[8:]))); c >= 0 && c < len(m.effects.colors) {
+		b.Color = c
+	}
+	weights := int(le.Uint16(batch[20:]))
+	for j := range count {
+		if w := lookup(0x90, weights+j); w < len(m.effects.weights) {
+			b.Weights[j] = w
+		}
+	}
+	b.VertexShader = VertexShader(b.TextureCount, b.ShaderID)
+	b.PixelShader = PixelShader(b.TextureCount, b.ShaderID)
+	slots := [2]int{0, 1}
+	if b.VertexShader == 11 { // Diffuse_T1_Env_T2
+		slots[1] = 2
+	}
+	transforms := int(le.Uint16(batch[22:]))
+	for j := range min(count, 2) {
+		if t := lookup(0x98, transforms+slots[j]); t < len(m.effects.transforms) {
+			b.TexMatrix[j] = t
+		}
+	}
 }

@@ -23,6 +23,7 @@ func TestSceneSharesSkeletonAndAttaches(t *testing.T) {
 		{Asset: &Asset{Model: root}},
 		{Asset: &Asset{Model: cloth}, BoneMap: bm},
 		{Asset: &Asset{Model: helm}, Attached: true, AttachBone: 1, AttachPos: Vec3{0, 0, 1}},
+		{Asset: &Asset{Model: &Model{Stand: -1}}, Attached: true, AttachPos: Vec3{1, 0, 0}, Parent: 3},
 	}}
 	f, err := s.Animate(500)
 	if err != nil {
@@ -36,6 +37,9 @@ func TestSceneSharesSkeletonAndAttaches(t *testing.T) {
 	}
 	if got := Transform(f.Models[2], Vec3{}); got != (Vec3{0, 0, 3}) {
 		t.Errorf("attachment at %v, want bone transform plus offset", got)
+	}
+	if got := Transform(f.Models[3], Vec3{}); got != (Vec3{1, 0, 3}) {
+		t.Errorf("effect attached to the helm at %v, want helm transform plus offset", got)
 	}
 	if f.Models[0] != Identity() || f.Models[1] != Identity() {
 		t.Error("unattached instances must use the identity model matrix")

@@ -42,8 +42,11 @@ var FileDataIDs = map[string]uint32{
 	"ItemDisplayInfoMaterialRes":   1280614,
 	"ItemDisplayInfoModelMatRes":   4050937,
 	"ItemModifiedAppearance":       982457,
+	"ItemVisuals":                  1343605,
 	"ModelFileData":                1337833,
+	"SpellItemEnchantment":         1362771,
 	"TextureFileData":              982459,
+	"TransmogIllusion":             3580450,
 }
 
 const definitionsURL = "https://raw.githubusercontent.com/wowdev/WoWDBDefs/master/definitions/"

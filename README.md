@@ -95,6 +95,36 @@ idle pose, shares it with collection models, positions attachments, and the
 GPU does vertex skinning, texturing, lighting and M2 blending (opaque,
 alpha-key, alpha, additive, modulate).
 
+Materials and lighting follow the game's M2 shader model, ported from
+WebWowViewerCpp (the wow.tools renderer):
+
+- Each batch's `shaderID` and texture count resolve to one of the M2 vertex
+  shaders (UV sets, sphere/environment mapping for shiny metal, edge fade)
+  and one of the 37 pixel combiners (`Combiners_Opaque_Mod2x`, `…_Add`,
+  `…_Mod_Add_Alpha`, …), with up to four textures and the second UV set.
+- Animated mesh colours, transparency weights and texture transforms
+  (scrolling and rotating glows) are evaluated every frame from the model's
+  Stand loop and global sequences. When the model keeps its Stand keyframes
+  in an external `.anim` file (AFID), that file is loaded for these tracks too.
+- Particle emitters (`M2Particle`, e.g. glowing armour, halos, flaming
+  feet) are simulated on the CPU as in the client's `CParticleEmitter2`:
+  plane and sphere generators, emission rate, lifespan, speed and spread,
+  gravity (including compressed vectors), wind and drag, age curves for
+  colour, alpha and scale, size variation, twinkle, spin, texture-atlas
+  cells, local or world space, and velocity- or model-plane-aligned quads.
+  They are pre-warmed so effects are already running, then drawn after the
+  transparent layers with the emitter's blend mode, without depth writes.
+- Weapon enchants and illusions from the Armory (`enchant`) resolve through
+  `SpellItemEnchantment.ItemVisual` (or directly as an `ItemVisuals` ID) to
+  up to five effect models, which attach to the weapon's ItemVisual
+  attachment points 0–4 and follow the weapon's animation.
+- Material flags select unlit shading, two-sided rendering, depth test and
+  depth write. Transparent layers are drawn after opaque ones, ordered by
+  priority plane.
+- Lighting uses the Wowhead viewer's rig: ambient 0.35 plus a white key
+  light and two 0.35 fill lights fixed in view space. Glow layers are added
+  after lighting, as in game.
+
 Idle animation: the idle fidgets are the other variations of WoW animation 0
 (Stand), each with its own `.anim` file. Stand loops for 6–12 s, then one
 fidget plays and the body returns to Stand. Fidgets come in shuffled order,
@@ -111,11 +141,15 @@ WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 
 - DB2 **hotfixes** are not on the CDN, so items or choices added by hotfix
   after the build may be missing; they are reported as warnings.
-- Particles, ribbons, texture animations, enchant visuals, spell effects
-  and some special materials (eye glow, “runes”) are not rendered;
-  unresolved replaceable textures are skipped rather than drawn.
-- A few cosmetic details differ from the game (e.g. legacy textures at robe
-  hems, simplified lighting/shader effects).
+- Ribbon emitters (trails), particle tails, spell/aura effects and
+  particle-spawned models are not rendered; spline emitters are
+  approximated by their plane area and bone emitters are skipped.
+  Enchants without an `ItemVisual` (most modern stat enchants) correctly
+  show nothing. WoW Forever profiles carry no enchant data. Unresolved
+  replaceable textures are skipped rather than drawn.
+- A few cosmetic details differ from the game, e.g. legacy textures at robe
+  hems, and the in-game zone lighting, shadows and bloom (the viewer uses
+  Wowhead's fixed studio lighting).
 - Linux only; encrypted CDN content fails explicitly (no keys are obtained).
 
 ## Keyboard

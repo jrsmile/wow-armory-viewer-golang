@@ -31,6 +31,10 @@ var tableNames = []string{
 	"HelmetGeosetData", "Item",
 }
 
+// optionalTables only add detail (weapon enchant visuals); a product
+// lacking them (e.g. WoW Forever) still builds.
+var optionalTables = []string{"SpellItemEnchantment", "ItemVisuals"}
+
 type build struct {
 	*Builder
 	ctx      context.Context
@@ -73,6 +77,11 @@ func (bl *Builder) Build(ctx context.Context, app Appearance) (*model.Scene, err
 			return nil, err
 		}
 		b.t[name] = t
+	}
+	for _, name := range optionalTables {
+		if t, err := b.DB.Table(ctx, name); err == nil {
+			b.t[name] = t
+		}
 	}
 	b.race = int64(app.Race)
 	switch b.race {
@@ -817,6 +826,64 @@ func (b *build) itemModels(items map[int]equipped, body *model.Model, composites
 				}
 			}
 			b.scene.Instances = append(b.scene.Instances, in)
+			if in.Attached && (it.Slot == SlotMainHand || it.Slot == SlotOffHand) {
+				b.enchantModels(it, a.Model, len(b.scene.Instances))
+			}
 		}
+	}
+}
+
+// enchantVisual resolves a weapon's enchant to ItemVisuals.ModelFileID: the
+// appearance API reports a SpellItemEnchantment ID (whose ItemVisual may be
+// 0, i.e. invisible) or, for IDs with no such row, an ItemVisuals ID.
+func (b *build) enchantVisual(enchant int) (models [5]int64, ok bool) {
+	sie, iv := b.t["SpellItemEnchantment"], b.t["ItemVisuals"]
+	if enchant <= 0 || sie == nil || iv == nil {
+		return models, false
+	}
+	visual := int64(enchant)
+	if r := sie.Lookup(uint32(enchant)); r >= 0 {
+		visual = sie.Int(r, "ItemVisual")
+	}
+	r := iv.Lookup(uint32(visual))
+	if visual <= 0 || r < 0 {
+		return models, false
+	}
+	for k := range models {
+		models[k] = iv.At(r, "ModelFileID", k)
+	}
+	return models, true
+}
+
+// enchantModels attaches a weapon enchant's effect models (usually particle
+// emitters) to the weapon's ItemVisual attachment points 0-4.
+func (b *build) enchantModels(it equipped, weapon *model.Model, parent int) {
+	models, ok := b.enchantVisual(it.Enchant)
+	if !ok {
+		return
+	}
+	loaded := map[int64]*model.Asset{}
+	for k, fdid := range models {
+		if fdid <= 0 {
+			continue
+		}
+		at, ok := weapon.FindAttachment(uint32(k))
+		if !ok {
+			continue
+		}
+		a := loaded[fdid]
+		if a == nil {
+			var err error
+			if a, err = model.LoadWith(b.ctx, b.Files, uint32(fdid), model.Options{Cache: b.Cache}); err != nil {
+				b.warn("slot %d: enchant %d model %d: %v", it.Slot, it.Enchant, fdid, err)
+				continue
+			}
+			loaded[fdid] = a
+			b.scene.Warnings = append(b.scene.Warnings, a.Warnings...)
+		}
+		b.scene.Instances = append(b.scene.Instances, &model.Instance{
+			Name:  fmt.Sprintf("slot %d enchant %d", it.Slot, it.Enchant),
+			Asset: a, Attached: true, AttachBone: at.Bone, AttachPos: at.Position, Parent: parent,
+		})
 	}
 }

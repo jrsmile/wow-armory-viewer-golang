@@ -11,6 +11,7 @@ type Item struct {
 	Slot     int
 	ItemID   int
 	Modifier int // ItemAppearanceModifierID; -1 = default
+	Enchant  int // weapon enchant/illusion (SpellItemEnchantment or ItemVisuals ID)
 }
 
 // Appearance is everything needed to assemble a character model.
@@ -69,6 +70,7 @@ type armoryJSON struct {
 		ID                int  `json:"id"`
 		InternalSlot      int  `json:"internal_slot_id"`
 		Modifier          int  `json:"item_appearance_modifier_id"`
+		Enchant           int  `json:"enchant"`
 		SecondaryID       int  `json:"secondary_id"`
 		SecondaryModifier *int `json:"secondary_item_appearance_modifier_id"`
 	} `json:"items"`
@@ -91,7 +93,7 @@ func ParseArmory(data []byte) (Appearance, error) {
 	shoulderRight := false
 	for _, it := range j.Items {
 		slot := it.InternalSlot + 1
-		a.Items = append(a.Items, Item{Slot: slot, ItemID: it.ID, Modifier: it.Modifier})
+		a.Items = append(a.Items, Item{Slot: slot, ItemID: it.ID, Modifier: it.Modifier, Enchant: it.Enchant})
 		if slot == SlotShoulder && it.SecondaryID != 0 {
 			mod := it.Modifier
 			if it.SecondaryModifier != nil {

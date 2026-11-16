@@ -248,3 +248,63 @@ func FuzzModel(f *testing.F) {
 		}
 	})
 }
+
+func TestShaderIDMapping(t *testing.T) {
+	for _, c := range []struct {
+		count       int
+		id          uint16
+		pixel, vert int
+	}{
+		{1, 0x8000, 12, 3}, {1, 0x8003, 15, 6}, {2, 0x4011, 6, 2},
+		{2, 0x4014, 7, 2}, {1, 0x10, 1, 0}, {2, 0xe, 4, 3},
+	} {
+		if p, v := PixelShader(c.count, c.id), VertexShader(c.count, c.id); p != c.pixel || v != c.vert {
+			t.Errorf("shader %#x/%d = ps %d vs %d, want ps %d vs %d", c.id, c.count, p, v, c.pixel, c.vert)
+		}
+	}
+}
+
+// appendTrack appends an M2Track with two keys at 0 and 1000 ms to data and
+// writes its header at header.
+func appendTrack(data []byte, header int, values []byte) []byte {
+	base := len(data)
+	data = append(data, make([]byte, 8+8+8)...)
+	data = append(data, values...)
+	le.PutUint16(data[header:], 1)
+	le.PutUint16(data[header+2:], 0xffff)
+	descriptor(data, header+4, 1, base)
+	descriptor(data, header+12, 1, base+8)
+	descriptor(data, base, 2, base+16)
+	descriptor(data, base+8, 2, base+24)
+	le.PutUint32(data[base+20:], 1000)
+	return data
+}
+
+func TestEffectWeightAndTextureScroll(t *testing.T) {
+	data := fixtureM2()
+	weight := len(data)
+	data = append(data, make([]byte, 20+60)...)
+	transform := weight + 20
+	descriptor(data, 0x58, 1, weight)
+	descriptor(data, 0x60, 1, transform)
+	for _, off := range []int{transform + 20, transform + 40} {
+		le.PutUint16(data[off+2:], 0xffff)
+	}
+	weights := make([]byte, 4)
+	le.PutUint16(weights[2:], 32767)
+	data = appendTrack(data, weight, weights)
+	translation := make([]byte, 24)
+	putFloat(translation, 12, 1)
+	data = appendTrack(data, transform, translation)
+	m, err := ParseM2(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := m.Effects(1500) // wraps to 500 ms in the 1000 ms Stand loop
+	if len(fx.Weights) != 1 || math.Abs(float64(fx.Weights[0]-0.5)) > 0.01 {
+		t.Fatalf("weights = %v, want [0.5]", fx.Weights)
+	}
+	if len(fx.Textures) != 1 || math.Abs(float64(fx.Textures[0][12]-0.5)) > 0.01 {
+		t.Fatalf("texture matrix = %v, want u offset 0.5", fx.Textures)
+	}
+}

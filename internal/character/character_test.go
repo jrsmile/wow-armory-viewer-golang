@@ -12,12 +12,12 @@ func TestParseArmory(t *testing.T) {
 	"gender":{"type":"FEMALE"},"customizations":[{"option":{"id":1},"choice":{"id":2}}],
 	"items":[{"id":100,"internal_slot_id":0,"item_appearance_modifier_id":0},
 	{"id":300,"internal_slot_id":2,"item_appearance_modifier_id":1,"secondary_id":301,"secondary_item_appearance_modifier_id":4},
-	{"id":500,"internal_slot_id":4}]}`
+	{"id":500,"internal_slot_id":4,"enchant":213}]}`
 	a, err := ParseArmory([]byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Item{{SlotHead, 100, 0}, {SlotShoulder, 300, 1}, {SlotRightShoulder, 301, 4}, {SlotChest, 500, 0}}
+	want := []Item{{SlotHead, 100, 0, 0}, {SlotShoulder, 300, 1, 0}, {SlotRightShoulder, 301, 4, 0}, {SlotChest, 500, 0, 213}}
 	if a.Name != "Naowh" || a.Race != 10 || a.Class != 5 || !a.Female || a.Choices[1] != 2 || !reflect.DeepEqual(a.Items, want) {
 		t.Fatalf("got %+v", a)
 	}
@@ -25,7 +25,7 @@ func TestParseArmory(t *testing.T) {
 	// Without a split transmog both shoulders use the same appearance.
 	a, err = ParseArmory([]byte(`{"playable_race":{"id":2},"gender":{"type":"MALE"},
 	"items":[{"id":300,"internal_slot_id":2,"item_appearance_modifier_id":3}]}`))
-	if err != nil || a.Female || !reflect.DeepEqual(a.Items, []Item{{SlotShoulder, 300, 3}, {SlotRightShoulder, 300, 3}}) {
+	if err != nil || a.Female || !reflect.DeepEqual(a.Items, []Item{{SlotShoulder, 300, 3, 0}, {SlotRightShoulder, 300, 3, 0}}) {
 		t.Fatalf("got %+v %v", a, err)
 	}
 	if _, err := ParseArmory([]byte(`{"gender":{"type":"MALE"}}`)); err == nil {
