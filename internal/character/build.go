@@ -651,6 +651,18 @@ func intKeys[V any](m map[int]V) map[int64]bool {
 var attachmentsBySlot = map[int][]uint32{
 	SlotHead: {11}, SlotShoulder: {6}, SlotRightShoulder: {5}, SlotBack: {12},
 	SlotMainHand: {1}, SlotOffHand: {2},
+	SlotWaist: {53}, // belt buckle; ModelResourcesID[1] is the skinned belt
+}
+
+// baseMeshOnly reports whether every submesh is geoset 0 (attachment-style
+// models such as belt buckles, unlike geoset-split collection models).
+func baseMeshOnly(m *model.Model) bool {
+	for _, b := range m.Batches {
+		if b.Geoset != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // modelChoice mirrors DBComponentModelFileData.getModelForRaceGender.
@@ -784,6 +796,9 @@ func (b *build) itemModels(items map[int]equipped, body *model.Model, composites
 			ai := int(p.index)
 			if shoulder {
 				ai = 0
+			}
+			if it.Slot == SlotWaist && !baseMeshOnly(a.Model) {
+				ai = len(attach) // a skinned belt/set collection, not a buckle
 			}
 			if ai < len(attach) {
 				at, ok := body.FindAttachment(attach[ai])
