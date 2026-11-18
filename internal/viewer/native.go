@@ -62,6 +62,7 @@ type sdl struct {
 	free                func(unsafe.Pointer)
 	setWindowFullscreen func(uintptr, uint32) int32
 	showCursor          func(int32) int32
+	relativeMouseMode   func(int32) int32
 }
 
 type gl struct {
@@ -150,7 +151,7 @@ func loadSDL() (sdl, uintptr, error) {
 		{&s.glGetDrawableSize, "SDL_GL_GetDrawableSize"}, {&s.pollEvent, "SDL_PollEvent"},
 		{&s.startTextInput, "SDL_StartTextInput"}, {&s.stopTextInput, "SDL_StopTextInput"}, {&s.getError, "SDL_GetError"},
 		{&s.getClipboardText, "SDL_GetClipboardText"}, {&s.free, "SDL_free"}, {&s.setWindowFullscreen, "SDL_SetWindowFullscreen"},
-		{&s.showCursor, "SDL_ShowCursor"},
+		{&s.showCursor, "SDL_ShowCursor"}, {&s.relativeMouseMode, "SDL_SetRelativeMouseMode"},
 	} {
 		purego.RegisterLibFunc(binding.target, lib, binding.name)
 	}
@@ -742,11 +743,14 @@ func Run(config Config) error {
 	}
 	s.startTextInput()
 	defer s.stopTextInput()
+	var drag mouseDrag
+	defer drag.stop(s.relativeMouseMode)
 	var pauseStart time.Time
 	var pausedDuration time.Duration
 	for {
 		event := [56]byte{}
 		for s.pollEvent(unsafe.Pointer(&event[0])) != 0 {
+			angle += drag.handle(&event, current != nil, s.relativeMouseMode)
 			kind := modelEndian(event[:4])
 			if kind == 0x100 {
 				return nil
@@ -840,6 +844,7 @@ func Run(config Config) error {
 			g.freeScene(current)
 			current, config.Scene = next, result.scene
 			status = "Loaded " + result.scene.Title
+			drag.stop(s.relativeMouseMode)
 			showUI, help, angle, zoom = false, false, float32(-math.Pi/2), 1
 			start, pausedDuration, paused = time.Now(), 0, false
 		default:
@@ -884,7 +889,7 @@ func Run(config Config) error {
 				lines = append(lines, config.Scene.Warnings...)
 			}
 			if help {
-				lines = append(lines, "", "Tab: hide/show input | Ctrl+V: paste | Ctrl+A: clear input", "Enter: profile lookup | F11: fullscreen | Esc: quit", "With input hidden: arrows orbit/zoom | Space: pause | Q: quit", "?: shortcuts | Idle: Stand (WoW animation 0) cross-fading into its fidget variations.")
+				lines = append(lines, "", "Tab: hide/show input | Ctrl+V: paste | Ctrl+A: clear input", "Enter: profile lookup | F11: fullscreen | Esc: quit", "Left mouse drag: rotate | arrows: orbit/zoom", "With input hidden: Space: pause | Q: quit", "?: shortcuts | Idle: Stand (WoW animation 0) cross-fading into its fidget variations.")
 			}
 			g.drawOverlay(overlay, overlayVAO, overlayTexture, int(width), int(height), lines, foot)
 		}
@@ -903,6 +908,44 @@ func Run(config Config) error {
 		s.glSwapWindow(window)
 		time.Sleep(time.Millisecond)
 	}
+}
+
+type mouseDrag struct {
+	active, relative bool
+}
+
+func (d *mouseDrag) stop(setRelative func(int32) int32) {
+	if d.relative {
+		setRelative(0)
+	}
+	d.active, d.relative = false, false
+}
+
+func (d *mouseDrag) handle(event *[56]byte, hasScene bool, setRelative func(int32) int32) float32 {
+	switch modelEndian(event[:4]) {
+	case 0x401: // SDL_MOUSEBUTTONDOWN
+		if hasScene && event[16] == 1 && !d.active {
+			d.active = true
+			d.relative = setRelative(1) == 0
+		}
+	case 0x402: // SDL_MOUSEBUTTONUP
+		if event[16] == 1 {
+			d.stop(setRelative)
+		}
+	case 0x400: // SDL_MOUSEMOTION
+		if d.active {
+			if modelEndian(event[16:20])&1 == 0 {
+				d.stop(setRelative)
+				break
+			}
+			return float32(int32(modelEndian(event[28:32]))) * 0.01
+		}
+	case 0x200: // SDL_WINDOWEVENT
+		if event[12] == 2 || event[12] == 7 || event[12] == 13 { // hidden, minimized, focus lost
+			d.stop(setRelative)
+		}
+	}
+	return 0
 }
 
 func modelEndian(data []byte) uint32 {

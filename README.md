@@ -190,7 +190,7 @@ WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 - Windows runtime/graphics behavior still needs native Windows smoke testing;
   encrypted CDN content fails explicitly (no keys are obtained).
 
-## Keyboard
+## Keyboard and mouse
 
 | Shortcut | Action |
 | --- | --- |
@@ -198,6 +198,7 @@ WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 | Enter | Look up and display the character |
 | Tab | Hide/show the input overlay |
 | F11 | Toggle fullscreen |
+| Left mouse drag | Rotate the character horizontally |
 | Left/Right, Up/Down | Orbit, zoom (overlay hidden) |
 | Space | Pause/resume the idle animation (overlay hidden) |
 | ? | Shortcut overlay |
