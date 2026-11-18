@@ -28,6 +28,7 @@ type Scene struct {
 	Instances []*Instance
 	Warnings  []string
 	idle      *IdleCycle
+	physics   []*physicsSystem
 }
 
 // SingleScene wraps one asset for diagnostic viewing.
@@ -64,7 +65,15 @@ func (s *Scene) Animate(ms uint32) (Frame, error) {
 		}
 		blend = s.idle.At(ms)
 	}
-	return s.animate(blend, ms)
+	if len(s.physics) != len(s.Instances) {
+		s.physics = make([]*physicsSystem, len(s.Instances))
+		for i, in := range s.Instances {
+			if in.Asset.Model.physics != nil {
+				s.physics[i] = &physicsSystem{model: in.Asset.Model}
+			}
+		}
+	}
+	return s.animateFrame(blend, ms, s.physics)
 }
 
 // IdleClip reports the body clip last played by Animate (0: Stand,
@@ -77,6 +86,10 @@ func (s *Scene) IdleClip() int {
 }
 
 func (s *Scene) animate(blend Blend, ms uint32) (Frame, error) {
+	return s.animateFrame(blend, ms, nil)
+}
+
+func (s *Scene) animateFrame(blend Blend, ms uint32, physics []*physicsSystem) (Frame, error) {
 	f := Frame{Poses: make([][]Mat4, len(s.Instances)), Models: make([]Mat4, len(s.Instances))}
 	var root []Mat4
 	for i, in := range s.Instances {
@@ -100,9 +113,6 @@ func (s *Scene) animate(blend Blend, ms uint32) (Frame, error) {
 		if err != nil {
 			return f, err
 		}
-		if i == 0 {
-			root = pose
-		}
 		f.Poses[i] = pose
 		f.Models[i] = Identity()
 		switch {
@@ -115,6 +125,12 @@ func (s *Scene) animate(blend Blend, ms uint32) (Frame, error) {
 			f.Models[i] = Multiply(f.Models[i], Translate(in.AttachPos))
 		case in.Attached && root != nil && in.AttachBone < len(root):
 			f.Models[i] = Multiply(root[in.AttachBone], Translate(in.AttachPos))
+		}
+		if i < len(physics) && physics[i] != nil {
+			physics[i].update(ms, f.Models[i], pose)
+		}
+		if i == 0 {
+			root = pose
 		}
 	}
 	return f, nil

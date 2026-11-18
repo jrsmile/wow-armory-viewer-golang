@@ -170,6 +170,18 @@ sequence's blend time (150–500 ms). If a fidget has no keyframes for a bone,
 that bone keeps its Stand track instead of snapping to the bind pose, so the
 start and end of every clip line up with Stand.
 
+Hanging gear with supported `PFDC`/`PFID` physics data now uses its authored
+rigid bodies instead of remaining in the exported pose. Simulation runs in
+Z-up world space with WoW's default gravity of **-10 yards/s²**, multiplied
+by each body's `gravityScale`. Capsule/sphere mass and inertia, damping,
+kinematic follow factors, shoulder cone/twist limits, rigid welds, and
+self-collision keep hanging parts attached while the character idles.
+Each instance has its own simulation, which pauses with the animation.
+An opt-in online regression test checks that Theradras/Taddie's belt ends
+hang downward through 20 seconds of idle animation:
+`ARMORY_ONLINE_TESTS=1 go test ./cmd/armory -run TestOnlineTaddieBeltHangsUnderGravity`
+(set `ARMORY_CACHE` to reuse a CDN cache directory other than the default).
+
 The format layer supports MD21/MD20 (v264–274), SFID skins, TXID textures,
 SKID skeletons, external `.anim` Stand and idle-variation tracks, BLP2 (palette/DXT1/3/5/BGRA),
 WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
@@ -187,6 +199,11 @@ WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 - A few cosmetic details differ from the game, e.g. legacy textures at robe
   hems, and the in-game zone lighting, shadows and bloom (the viewer uses
   Wowhead's fixed studio lighting).
+- Gear physics uses a small substepped constraint solver, not the game's
+  proprietary Domino engine. Convex-hull/box shapes, motorized or soft joints,
+  and other joint types are not supported; those physics files are skipped
+  with a warning, preserving the original animation. There is no collision
+  against the character's rendered mesh.
 - Windows runtime/graphics behavior still needs native Windows smoke testing;
   encrypted CDN content fails explicitly (no keys are obtained).
 

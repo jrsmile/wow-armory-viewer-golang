@@ -158,6 +158,21 @@ func LoadWith(ctx context.Context, files Files, id uint32, opts Options) (*Asset
 			m.Bones = nil
 		}
 	}
+	if le.Uint32(m.data[0x10:])&0x20 != 0 {
+		physics := m.chunks["PFDC"]
+		var physicsErr error
+		if pfid := m.chunks["PFID"]; len(pfid) >= 4 && le.Uint32(m.data[0x10:])&0x1000000 == 0 {
+			if file := le.Uint32(pfid); file != 0 {
+				physics, physicsErr = files.File(ctx, file)
+			}
+		}
+		if physicsErr == nil {
+			physicsErr = m.SetPhysics(physics)
+		}
+		if physicsErr != nil {
+			a.Warnings = append(a.Warnings, fmt.Sprintf("model %d: physics skipped: %v", id, physicsErr))
+		}
+	}
 	for i, t := range m.Textures {
 		if img := opts.TypeImages[t.Type]; t.Type != 0 && img != nil {
 			a.Textures[i] = img

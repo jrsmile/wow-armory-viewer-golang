@@ -119,6 +119,7 @@ type Model struct {
 	boneData     []byte
 	boneHeader   int
 	effects      effectTracks
+	physics      *physicsData
 }
 
 func Chunks(data []byte) (map[string][]byte, error) {
