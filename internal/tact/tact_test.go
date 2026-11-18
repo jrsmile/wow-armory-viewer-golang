@@ -67,6 +67,20 @@ func TestBLTEAndChecksums(t *testing.T) {
 	}
 }
 
+func TestBuildID(t *testing.T) {
+	for version, want := range map[string]uint32{"12.1.5.70961": 70961, "3.4.0.45232": 45232} {
+		got, err := BuildID(version)
+		if err != nil || got != want {
+			t.Errorf("BuildID(%q) = %d, %v; want %d", version, got, err, want)
+		}
+	}
+	for _, version := range []string{"", "12.1.5", "12.1.5.build", "12.1.5.0"} {
+		if _, err := BuildID(version); err == nil {
+			t.Errorf("BuildID(%q) succeeded", version)
+		}
+	}
+}
+
 func TestEncodingLookup(t *testing.T) {
 	data := make([]byte, 22+32+1024)
 	copy(data, "EN")

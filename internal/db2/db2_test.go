@@ -51,6 +51,22 @@ func TestParseDBD(t *testing.T) {
 	}
 }
 
+func TestParseDBDStringTypes(t *testing.T) {
+	fields, err := ParseDBD(`COLUMNS
+string Name
+locstring Text
+
+LAYOUT 12345678
+Name
+Text`, "12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 || !fields[0].String || !fields[1].String || fields[0].Float || fields[1].Float {
+		t.Fatalf("string types not preserved: %+v", fields)
+	}
+}
+
 // buildWDC3 writes a one-section WDC3 file with records {ID 5, 9} plus a copy
 // of 9 as 12: Value is inline signed 16-bit, Kind a 2-bit pallet index, Scale a
 // common-data float (default 1.5, ID 9 = 2.5) and ParentID relationship data.

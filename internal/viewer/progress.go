@@ -99,7 +99,7 @@ func (p *Progress) snapshot(n int) (lines []string, summary string, fraction flo
 	if known {
 		fraction = float64(done) / float64(total)
 	}
-	summary = fmt.Sprintf("CDN: %d files, %s downloaded, %d in progress", p.files, size(p.bytes), len(p.active))
+	summary = fmt.Sprintf("Downloads: %d files, %s downloaded, %d in progress", p.files, size(p.bytes), len(p.active))
 	return lines, summary, fraction
 }
 

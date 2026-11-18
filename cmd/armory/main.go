@@ -290,6 +290,7 @@ type session struct {
 	log           func(string)
 	progress      func(url string, done, total int64, err error)
 	once          sync.Once
+	hotfixOnce    sync.Once
 	err           error
 	client        *tact.Client
 	db            *db2.DB
@@ -310,8 +311,23 @@ func (s *session) open(ctx context.Context) error {
 			return
 		}
 		s.db = db2.New(s.client, filepath.Join(s.cache, "db2"))
+		s.db.Log = s.log
+		s.db.Warn = func(message string) { fmt.Fprintln(os.Stderr, "warning:", message) }
 	})
 	return s.err
+}
+
+func (s *session) loadHotfixes(ctx context.Context) {
+	s.hotfixOnce.Do(func() {
+		build, err := tact.BuildID(s.client.Build.Version)
+		if err != nil {
+			s.db.Warn(fmt.Sprintf("online hotfixes unavailable: %v", err))
+			return
+		}
+		if err := s.db.LoadHotfixes(ctx, build, s.progress); err != nil {
+			s.db.Warn(fmt.Sprintf("online hotfixes unavailable for build %d: %v", build, err))
+		}
+	})
 }
 
 func (s *session) model(ctx context.Context, id, texture uint32) (*model.Scene, error) {
@@ -331,6 +347,7 @@ func (s *session) character(ctx context.Context, app character.Appearance) (*mod
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.loadHotfixes(ctx)
 	b := &character.Builder{Files: s.client, DB: s.db, Cache: &s.textures, Log: s.log}
 	fmt.Fprintf(os.Stderr, "Assembling %s from build %s...\n", app.Name, s.client.Build.Version)
 	return b.Build(ctx, app)

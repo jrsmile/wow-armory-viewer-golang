@@ -186,10 +186,19 @@ The format layer supports MD21/MD20 (v264–274), SFID skins, TXID textures,
 SKID skeletons, external `.anim` Stand and idle-variation tracks, BLP2 (palette/DXT1/3/5/BGRA),
 WDC3/4/5 tables and checksum-verified TACT/BLTE over HTTP ranges.
 
+Before character assembly, the viewer downloads the verified Raidbots
+`DBCache.bin` for the exact Blizzard build from
+`https://storage.googleapis.com/raidbots-static/wow/<build>/enUS/DBCache.bin`.
+The URL and byte progress appear with other loading downloads. A validated
+copy is cached under the app's cache directory and reused for that build.
+XFTH v9 rows override or delete DB2 rows before assembly; a missing, mismatched,
+or unsupported cache is warned about and the CDN tables are used unchanged.
+String fields are consumed but not exposed by the viewer's numeric DB2 API.
+No installed WoW client is needed. Raidbots currently provides these caches
+in `enUS`, so localized text is not guaranteed to match the character's locale.
+
 ## Known limitations
 
-- DB2 **hotfixes** are not on the CDN, so items or choices added by hotfix
-  after the build may be missing; they are reported as warnings.
 - Ribbon emitters (trails), particle tails, spell/aura effects and
   particle-spawned models are not rendered; spline emitters are
   approximated by their plane area and bone emitters are skipped.

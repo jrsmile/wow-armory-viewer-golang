@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,19 @@ type Build struct {
 	BuildConfig string `json:"build_config"`
 	CDNConfig   string `json:"cdn_config"`
 	CDN         string `json:"cdn"`
+}
+
+// BuildID returns the numeric build suffix from a Blizzard versions string.
+func BuildID(version string) (uint32, error) {
+	dot := strings.LastIndexByte(version, '.')
+	if dot < 0 || strings.Count(version, ".") != 3 {
+		return 0, fmt.Errorf("invalid build version %q", version)
+	}
+	id, err := strconv.ParseUint(version[dot+1:], 10, 32)
+	if err != nil || id == 0 {
+		return 0, fmt.Errorf("invalid build version %q", version)
+	}
+	return uint32(id), nil
 }
 
 // TACT product codes of the games whose characters can be displayed.

@@ -20,7 +20,7 @@ func TestProgress(t *testing.T) {
 	// Same URL again (e.g. another archive range) is a new log entry.
 	p.Report("https://cdn/a", 0, -1, nil)
 	lines, summary, fraction = p.snapshot(3)
-	if fraction != -1 || len(lines) != 3 || !strings.HasSuffix(lines[0], "100 B") || summary != "CDN: 2 files, 100 B downloaded, 1 in progress" {
+	if fraction != -1 || len(lines) != 3 || !strings.HasSuffix(lines[0], "100 B") || summary != "Downloads: 2 files, 100 B downloaded, 1 in progress" {
 		t.Fatal(lines, summary, fraction)
 	}
 	for i := range progressHistory + 10 {

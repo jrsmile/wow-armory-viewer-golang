@@ -14,6 +14,7 @@ type Field struct {
 	Bits     int // element size in bits (8/16/32/64)
 	Signed   bool
 	Float    bool
+	String   bool
 	Count    int  // array length, 1 for scalars
 	Inline   bool // false for $noninline$ fields (ID list / relationship data)
 	ID       bool
@@ -114,7 +115,7 @@ func parseFieldLine(line string, columns map[string]string) (Field, error) {
 	case "float":
 		f.Float, f.Signed = true, false
 	case "string", "locstring":
-		f.Signed = false
+		f.String, f.Signed = true, false
 	}
 	return f, nil
 }

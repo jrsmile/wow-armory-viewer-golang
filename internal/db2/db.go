@@ -58,15 +58,22 @@ type Source interface {
 
 // DB loads and caches tables.
 type DB struct {
-	Source   Source
-	CacheDir string // refreshed DBD files are stored here
-	HTTP     *http.Client
-	mu       sync.Mutex
-	tables   map[string]*Table
+	Source    Source
+	CacheDir  string // refreshed DBD files are stored here
+	HTTP      *http.Client
+	Log       func(string)
+	Warn      func(string)
+	mu        sync.Mutex
+	tables    map[string]*Table
+	hotfix    *hotfixFile
+	hotfixURL func(uint32) string
 }
 
 func New(source Source, cacheDir string) *DB {
-	return &DB{Source: source, CacheDir: cacheDir, HTTP: &http.Client{Timeout: time.Minute}, tables: map[string]*Table{}}
+	return &DB{
+		Source: source, CacheDir: cacheDir, HTTP: &http.Client{Timeout: time.Minute},
+		tables: map[string]*Table{}, hotfixURL: raidbotsHotfixURL,
+	}
 }
 
 // Table loads a table by name.
@@ -95,6 +102,15 @@ func (d *DB) Table(ctx context.Context, name string) (*Table, error) {
 	t, err := Parse(name, data, fields)
 	if err != nil {
 		return nil, err
+	}
+	if d.hotfix != nil {
+		if n, err := applyHotfixes(t, fields, d.hotfix.tables[h.TableHash]); err != nil {
+			if d.Warn != nil {
+				d.Warn(fmt.Sprintf("%s hotfixes skipped: %v", name, err))
+			}
+		} else if n > 0 && d.Log != nil {
+			d.Log(fmt.Sprintf("%s: applied %d hotfix row(s)", name, n))
+		}
 	}
 	d.tables[name] = t
 	return t, nil
